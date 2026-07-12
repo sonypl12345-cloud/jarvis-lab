@@ -1,0 +1,31 @@
+# Private/local state
+being/
+memory/
+continuity/
+screenshots/
+*.jsonl
+*.sqlite
+*.db
+*.log
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Credentials and browser data
+*.key
+*.pem
+.env
+.env.*
+*token*
+*secret*
+*cookie*
+*profile*
+
+# Generated/runtime files
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
