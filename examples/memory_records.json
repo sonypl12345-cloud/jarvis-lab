@@ -1,0 +1,18 @@
+[
+  {
+    "type": "boundary",
+    "text": "External account and financial actions require task-specific approval.",
+    "source": "security-policy.md",
+    "observed_at": "2026-07-12T00:00:00+00:00",
+    "confidence": 0.98,
+    "concepts": ["external", "account", "financial", "approval"]
+  },
+  {
+    "type": "procedure",
+    "text": "Refresh a DOM snapshot immediately before and after a browser action.",
+    "source": "dom-procedure.md",
+    "observed_at": "2026-07-12T00:00:00+00:00",
+    "confidence": 0.92,
+    "concepts": ["DOM", "snapshot", "freshness", "browser"]
+  }
+]

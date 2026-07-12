@@ -24,8 +24,15 @@ verification, recovery, and economical use of language models.
 
 ## Status
 
-This repository begins as public architecture documentation. Reusable modules
-will be added only after privacy review, dependency cleanup, and isolated tests.
+The first reusable module is a dependency-free, source-aware memory
+consolidator. It keeps raw records unchanged, merges duplicates, preserves
+sources and confidence, and retrieves a compact top-k context.
+
+```powershell
+python .\src\jarvis_memory_v2.py build .\examples\memory_records.json .\memory-index.json
+python .\src\jarvis_memory_v2.py query .\memory-index.json "DOM freshness" --limit 5
+python -m unittest discover -s tests -v
+```
 
 ## Safety
 
