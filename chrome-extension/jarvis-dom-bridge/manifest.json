@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Jarvis DOM Bridge",
+  "version": "1.0.0",
+  "description": "Explicit read-only DOM distillation for a localhost Jarvis bridge.",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["http://127.0.0.1:8790/*"],
+  "action": {"default_title": "Capture active page", "default_popup": "popup.html"}
+}

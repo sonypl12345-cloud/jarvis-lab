@@ -34,6 +34,22 @@ python .\src\jarvis_memory_v2.py query .\memory-index.json "DOM freshness" --lim
 python -m unittest discover -s tests -v
 ```
 
+## Read-only DOM Bridge
+
+The DOM Bridge converts the active browser page into a compact list of visible
+interactive elements. Capture happens only when the extension button is
+pressed. Snapshots include a stable ID, DOM version, TTL, and mutation-driven
+invalidation.
+
+```powershell
+python .\src\dom_bridge_server.py --port 8790 --output .\dom-bridge-latest.json
+```
+
+Load `chrome-extension/jarvis-dom-bridge` as an unpacked extension, then press
+**Capture active page**. The server binds to localhost, accepts capture writes
+only from `chrome-extension://` origins, caps payloads and elements, and exposes
+no click, typing, cookie, account, or publishing endpoint.
+
 ## Safety
 
 Jarvis Lab does not publish credentials, browser profiles, financial data,
