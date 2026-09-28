@@ -8,19 +8,20 @@
 <meta name="robots" content="noindex,nofollow,noarchive">
 <meta name="referrer" content="no-referrer">
 <title>Приватна жива карта</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tomickigrzegorz/leaflet-rotate@0.2.4/dist/leaflet-rotate.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tomickigrzegorz/leaflet-rotate@0.2.4/dist/leaflet-rotate.umd.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@6.11.2/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@6.11.2/dist/maplibre-gl.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body,#appShell,#map{margin:0;width:100%;height:100%;overflow:hidden}
-:root{--lrc-control-bg:rgba(247,235,208,.94);--lrc-control-hover:#ead5ad;--lrc-control-size:42px}
 body{font-family:Georgia,"Times New Roman",serif;background:#120c08;color:#432b1d}
 #appShell{display:none;position:relative}
 #map{position:absolute;inset:0;background:#d7c294}
-.leaflet-container{font-family:Georgia,"Times New Roman",serif;filter:sepia(.38) saturate(.80) contrast(.97);transition:filter .8s ease}
-body.night .leaflet-container{filter:sepia(.55) saturate(.68) brightness(.60) contrast(1.08)}
+.maplibregl-map{font-family:Georgia,"Times New Roman",serif}
+.maplibregl-canvas{filter:sepia(.38) saturate(.80) contrast(.97);transition:filter .8s ease}
+body.night .maplibregl-canvas{filter:sepia(.55) saturate(.68) brightness(.60) contrast(1.08)}
+.maplibregl-ctrl-group{background:rgba(247,235,208,.94)!important;border:1px solid rgba(95,61,32,.26);box-shadow:0 6px 18px rgba(0,0,0,.16)!important}
+.maplibregl-ctrl-group button{width:42px;height:42px}
+.maplibregl-ctrl-attrib{font-size:9px!important}
 .vignette{position:fixed;inset:0;z-index:500;pointer-events:none;background:radial-gradient(circle at 50% 50%,transparent 50%,rgba(49,28,15,.18) 100%);mix-blend-mode:multiply}
 body.night .vignette{background:radial-gradient(circle at 50% 50%,rgba(8,14,28,.02) 38%,rgba(5,8,20,.56) 100%)}
 button{font:inherit;color:inherit}
@@ -67,6 +68,157 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
 .lockCard h1{margin:0 0 8px;font-size:24px}.lockCard p{margin:0;color:#bda27b;font-size:12px;line-height:1.5}.lockState{margin-top:14px;font-size:11px;color:#d8c39b}
 @media(max-width:390px){.actions{grid-template-columns:1fr}.drawer{width:92vw}}
 </style>
+
+<script>
+window.L=(function(){
+  let seq=0;
+  function toLngLat(p){return [Number(p[1]),Number(p[0])]}
+  function circlePolygon(center,radius,steps=64){
+    const lat=Number(center[0]),lng=Number(center[1]),coords=[];
+    const dy=radius/110540,dx=radius/(111320*Math.max(.15,Math.cos(lat*Math.PI/180)));
+    for(let i=0;i<=steps;i++){const a=i/steps*Math.PI*2;coords.push([lng+Math.cos(a)*dx,lat+Math.sin(a)*dy])}
+    return {type:'Feature',geometry:{type:'Polygon',coordinates:[coords]},properties:{}};
+  }
+  function makeMap(el,opts={}){
+    const raw=new maplibregl.Map({
+      container:el,
+      style:'https://tiles.openfreemap.org/styles/liberty',
+      center:[0,20],
+      zoom:2,
+      bearing:Number(opts.bearing)||0,
+      pitch:0,
+      maxPitch:0,
+      dragRotate:true,
+      touchZoomRotate:true,
+      attributionControl:true
+    });
+    if(raw.touchZoomRotate&&raw.touchZoomRotate.enable)raw.touchZoomRotate.enable();
+    if(raw.touchZoomRotate&&raw.touchZoomRotate.enableRotation)raw.touchZoomRotate.enableRotation();
+
+    function keepLabelsUpright(){
+      const style=raw.getStyle();
+      if(!style||!Array.isArray(style.layers))return;
+      for(const layer of style.layers){
+        if(layer.type!=='symbol')continue;
+        try{raw.setLayoutProperty(layer.id,'text-rotation-alignment','viewport')}catch(_){}
+        try{raw.setLayoutProperty(layer.id,'text-pitch-alignment','viewport')}catch(_){}
+        try{raw.setLayoutProperty(layer.id,'icon-rotation-alignment','viewport')}catch(_){}
+        try{raw.setLayoutProperty(layer.id,'icon-pitch-alignment','viewport')}catch(_){}
+      }
+    }
+    raw.on('style.load',keepLabelsUpright);
+
+    const api={
+      _raw:raw,
+      setView(p,z){raw.easeTo({center:toLngLat(p),zoom:z,duration:450});return api},
+      fitBounds(b,opts2={}){
+        const pad=Array.isArray(opts2.padding)?Math.max(...opts2.padding):opts2.padding;
+        raw.fitBounds(b._bounds||b,{padding:Number.isFinite(pad)?pad:55,maxZoom:opts2.maxZoom||17,duration:550});
+        return api;
+      },
+      removeLayer(layer){if(layer&&typeof layer.remove==='function')layer.remove();return api},
+      on(ev,fn){
+        raw.on(ev,e=>{
+          if((ev==='click'||ev==='contextmenu')&&e&&e.lngLat)fn({latlng:{lat:e.lngLat.lat,lng:e.lngLat.lng},originalEvent:e.originalEvent});
+          else fn(e);
+        });
+        return api;
+      },
+      getBearing(){return raw.getBearing()},
+      setBearing(v){raw.setBearing(v);return api}
+    };
+    return api;
+  }
+  function divIcon(o){return o||{}}
+  function marker(pos,o={}){
+    let m=null,api=null,currentIcon=o.icon||{};
+    const el=document.createElement('div');
+    function applyIcon(icon){
+      currentIcon=icon||{};
+      el.className=currentIcon.className||'';
+      el.innerHTML=currentIcon.html||'';
+      if(currentIcon.iconSize){el.style.width=currentIcon.iconSize[0]+'px';el.style.height=currentIcon.iconSize[1]+'px'}
+    }
+    applyIcon(currentIcon);
+    api={
+      addTo(map){
+        m=new maplibregl.Marker({element:el,anchor:'center',rotationAlignment:'viewport',pitchAlignment:'viewport'})
+          .setLngLat(toLngLat(pos)).addTo(map._raw);
+        return api;
+      },
+      setLatLng(p){pos=p;if(m)m.setLngLat(toLngLat(p));return api},
+      setIcon(icon){applyIcon(icon);return api},
+      setOpacity(v){el.style.opacity=String(v);return api},
+      bindPopup(html){
+        if(m)m.setPopup(new maplibregl.Popup({offset:18,closeButton:false}).setHTML(html));
+        return api;
+      },
+      remove(){if(m){m.remove();m=null}return api}
+    };
+    return api;
+  }
+  function circleMarker(pos,o={}){
+    let m=null,api=null;
+    const el=document.createElement('div'),r=Number(o.radius)||3;
+    el.style.width=(r*2)+'px';el.style.height=(r*2)+'px';el.style.borderRadius='50%';
+    el.style.background='rgba(91,57,35,'+(o.fillOpacity??.28)+')';
+    el.style.border=(Number(o.weight)||1)+'px solid rgba(91,57,35,'+(o.opacity??.34)+')';
+    el.style.pointerEvents=o.interactive===false?'none':'auto';
+    api={
+      addTo(map){m=new maplibregl.Marker({element:el,anchor:'center',rotationAlignment:'viewport'}).setLngLat(toLngLat(pos)).addTo(map._raw);return api},
+      setStyle(s={}){if(s.opacity!=null)el.style.borderColor='rgba(91,57,35,'+Math.max(0,Math.min(1,s.opacity))+')';if(s.fillOpacity!=null)el.style.background='rgba(91,57,35,'+Math.max(0,Math.min(1,s.fillOpacity))+')';return api},
+      remove(){if(m){m.remove();m=null}return api}
+    };
+    return api;
+  }
+  function circle(pos,o={}){
+    const id='acc-'+(++seq),fillId=id+'-fill',lineId=id+'-line';
+    let map=null,center=pos,radius=Number(o.radius)||20,alive=true;
+    function data(){return circlePolygon(center,radius)}
+    function ensure(){
+      if(!alive||!map)return;
+      const raw=map._raw;
+      if(!raw.isStyleLoaded()){raw.once('load',ensure);return}
+      if(!raw.getSource(id)){
+        raw.addSource(id,{type:'geojson',data:data()});
+        raw.addLayer({id:fillId,type:'fill',source:id,paint:{'fill-color':'#6b432a','fill-opacity':o.fillOpacity??.06}});
+        raw.addLayer({id:lineId,type:'line',source:id,paint:{'line-color':'#6b432a','line-opacity':o.opacity??.30,'line-width':o.weight??1}});
+      }else raw.getSource(id).setData(data());
+    }
+    const api={
+      addTo(m){map=m;ensure();return api},
+      setLatLng(p){center=p;ensure();return api},
+      setRadius(v){radius=Number(v)||radius;ensure();return api},
+      remove(){
+        alive=false;
+        if(map&&map._raw.isStyleLoaded()){
+          const raw=map._raw;
+          if(raw.getLayer(fillId))raw.removeLayer(fillId);
+          if(raw.getLayer(lineId))raw.removeLayer(lineId);
+          if(raw.getSource(id))raw.removeSource(id);
+        }
+        return api;
+      }
+    };
+    return api;
+  }
+  return {
+    map:makeMap,
+    tileLayer(){return{addTo(){return this}}},
+    control:{zoom(){return{addTo(map){map._raw.addControl(new maplibregl.NavigationControl({showCompass:true,showZoom:true,visualizePitch:false}),'bottom-right');return this}}}},
+    divIcon,
+    marker,
+    circleMarker,
+    circle,
+    latLngBounds(pts){
+      const b=new maplibregl.LngLatBounds();
+      (pts||[]).forEach(p=>b.extend(toLngLat(p)));
+      return {_bounds:b};
+    }
+  };
+})();
+</script>
+
 </head>
 <body>
 <div id="lock">
