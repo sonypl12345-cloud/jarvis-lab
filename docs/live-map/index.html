@@ -42,8 +42,12 @@ button{font:inherit;color:inherit}
 .pill{padding:6px 8px;border-radius:999px;background:rgba(255,250,235,.67);border:1px solid rgba(95,61,32,.16);font-size:11px}
 .me{width:22px;height:22px;border-radius:50%;background:#5d3a24;border:3px solid #f6e3b9;box-shadow:0 0 0 2px #5d3a24,0 0 22px rgba(93,58,36,.52);position:relative}
 .me:after{content:"Я";position:absolute;left:50%;top:-28px;transform:translateX(-50%);background:#f5e8ca;border:1px solid rgba(95,61,32,.28);padding:3px 7px;border-radius:999px;font-size:11px;font-weight:bold;white-space:nowrap}
+.smooth-person-marker,.smooth-me-marker{transition:transform 1.15s linear,opacity .6s ease!important}
 .person{position:relative;width:19px;height:19px;border-radius:50%;background:#794827;border:3px solid #f7e6bd;box-shadow:0 0 0 2px rgba(79,47,27,.78),0 0 18px rgba(107,67,42,.44)}
 .person:after{content:"";position:absolute;inset:-7px;border-radius:50%;border:1px solid rgba(107,67,42,.30);animation:pulse 2.2s ease-out infinite}
+.personNav{position:absolute;left:50%;top:-29px;transform:translateX(-50%);white-space:nowrap;padding:3px 7px;border-radius:999px;background:rgba(247,235,208,.94);border:1px solid rgba(95,61,32,.25);box-shadow:0 3px 10px rgba(55,28,12,.14);font:700 10px/1.2 system-ui,sans-serif;color:#50331f}
+.meetingPin{position:relative;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#efe0bd;border:2px solid #6d452a;box-shadow:0 0 0 4px rgba(239,224,189,.55),0 0 22px rgba(72,41,22,.32);font-size:16px}
+.meetingPin:after{content:"Зустріч";position:absolute;left:50%;top:-29px;transform:translateX(-50%);white-space:nowrap;padding:3px 7px;border-radius:999px;background:rgba(247,235,208,.94);border:1px solid rgba(95,61,32,.25);font:700 10px/1.2 system-ui,sans-serif;color:#50331f}
 @keyframes pulse{0%{transform:scale(.75);opacity:.8}70%,100%{transform:scale(1.8);opacity:0}}
 @media(prefers-reduced-motion:reduce){.person:after{animation:none;opacity:.25}.drawer,.backdrop{transition:none}}
 .toast{position:fixed;z-index:1400;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translate(-50%,12px);max-width:min(86vw,520px);padding:9px 12px;border-radius:999px;background:rgba(35,22,14,.88);color:#f5e6c8;font-size:12px;text-align:center;opacity:0;pointer-events:none;transition:.22s}
@@ -96,6 +100,15 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
       <button class="wideBtn" id="showAll">Показати всіх на карті</button>
     </div>
 
+    <div class="section" id="meetingActions">
+      <div class="label">Точка зустрічі</div>
+      <div class="line muted" id="meetingInfo">Не встановлена</div>
+      <div class="actions">
+        <button id="setMeeting">Поставити точку</button>
+        <button id="clearMeeting">Прибрати точку</button>
+      </div>
+    </div>
+
     <div class="section" id="ownerActions">
       <div class="label">Керування</div>
       <div class="actions">
@@ -137,16 +150,18 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
 (async function(){
   const ACCESS_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-access';
   const PRESENCE_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-presence';
+  const MEETING_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-meeting';
 
   const lock=document.getElementById('lock'),lockState=document.getElementById('lockState'),appShell=document.getElementById('appShell');
   const mapEl=document.getElementById('map'),statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),motionInfo=document.getElementById('motionInfo'),weatherInfo=document.getElementById('weatherInfo');
-  const peopleEl=document.getElementById('people'),countBadge=document.getElementById('countBadge'),drawer=document.getElementById('drawer'),backdrop=document.getElementById('backdrop'),toastEl=document.getElementById('toast');
+  const peopleEl=document.getElementById('people'),countBadge=document.getElementById('countBadge'),drawer=document.getElementById('drawer'),backdrop=document.getElementById('backdrop'),toastEl=document.getElementById('toast'),meetingInfo=document.getElementById('meetingInfo');
   const joinModal=document.getElementById('join'),shareModal=document.getElementById('share'),nameInput=document.getElementById('name'),shareLink=document.getElementById('shareLink');
   const ownerActions=document.getElementById('ownerActions'),guestActions=document.getElementById('guestActions');
 
   let role=null,ownerToken=null,guestSession=null;
   let map=null,me=null,accCircle=null,myPos=null,watchId=null,lastGuestPos=null;
-  let myTrail=[],myTrailLine=null,lastMeTs=0,lastWeatherAt=0,lastWeatherKey='',toastTimer=null,autoFitDone=false;
+  let myFootprints=[],lastMeTs=0,lastWeatherAt=0,lastWeatherKey='',toastTimer=null,autoFitDone=false;
+  let meetingMarker=null,meetingPoint=null,meetingMode=false;
   const members=new Map();
 
   function toast(msg,ms=2600){
@@ -166,6 +181,8 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
   }
   const access=(action,payload={})=>post(ACCESS_API,{action,...payload});
   const presence=(action,payload={})=>post(PRESENCE_API,{action,...payload});
+  const meeting=(action,payload={})=>post(MEETING_API,{action,...payload});
+  function meetingAuth(){return role==='owner'?{owner_token:ownerToken}:{session_token:guestSession}}
 
   const hashParams=new URLSearchParams(location.hash.replace(/^#/,''));
   const ownerFromLink=hashParams.get('owner');
@@ -230,8 +247,9 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
   L.control.zoom({position:'bottomright'}).addTo(map);
 
   function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-  function meIcon(){return L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[22,22],iconAnchor:[11,11]})}
-  function pIcon(){return L.divIcon({className:'',html:'<div class="person"></div>',iconSize:[19,19],iconAnchor:[9,9]})}
+  function meIcon(){return L.divIcon({className:'smooth-me-marker',html:'<div class="me"></div>',iconSize:[22,22],iconAnchor:[11,11]})}
+  function pIcon(nav=''){return L.divIcon({className:'smooth-person-marker',html:'<div class="person">'+(nav?'<div class="personNav">'+esc(nav)+'</div>':'')+'</div>',iconSize:[19,19],iconAnchor:[9,9]})}
+  function meetingIcon(){return L.divIcon({className:'',html:'<div class="meetingPin">✦</div>',iconSize:[28,28],iconAnchor:[14,14]})}
   function distanceM(a,b){
     if(!a||!b)return null;
     const R=6371000,t=x=>x*Math.PI/180,d1=t(b[0]-a[0]),d2=t(b[1]-a[1]);
@@ -240,6 +258,8 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
   }
   function fmtDistance(m){if(m==null||!Number.isFinite(m))return '?';return m<1000?Math.max(1,Math.round(m))+' м':(m/1000).toFixed(m<10000?1:0)+' км'}
   function fmtAge(ms){if(ms<15000)return 'зараз';if(ms<60000)return Math.round(ms/1000)+' с тому';if(ms<3600000)return Math.round(ms/60000)+' хв тому';return Math.round(ms/3600000)+' год тому'}
+  function bearingDeg(a,b){if(!a||!b)return null;const t=x=>x*Math.PI/180,p1=t(a[0]),p2=t(b[0]),dl=t(b[1]-a[1]),y=Math.sin(dl)*Math.cos(p2),x=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);return(Math.atan2(y,x)*180/Math.PI+360)%360}
+  function bearingArrow(d){if(!Number.isFinite(d))return '•';return['↑','↗','→','↘','↓','↙','←','↖'][Math.round(d/45)%8]}
   function weatherLabel(code){if(code===0)return 'ясно';if(code===1||code===2)return 'мінлива хмарність';if(code===3)return 'хмарно';if(code===45||code===48)return 'туман';if(code>=51&&code<=67)return 'дощ';if(code>=71&&code<=77)return 'сніг';if(code>=80&&code<=82)return 'зливи';if(code>=85&&code<=86)return 'снігопад';if(code>=95)return 'гроза';return 'змінна погода'}
 
   async function updateWeather(lat,lng){
@@ -254,6 +274,24 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
       weatherInfo.textContent='Погода: '+temp+' • '+weatherLabel(Number(w.weather_code))+' • вітер '+wind;
     }catch(_){weatherInfo.textContent='Погода: дані недоступні'}
   }
+
+  function addFootprint(arr,pos,own=false){
+    if(!pos)return;
+    const marker=L.circleMarker(pos,{radius:own?3.2:2.8,weight:1,opacity:.34,fillOpacity:.28,interactive:false}).addTo(map);
+    arr.push({marker,ts:Date.now()});
+    while(arr.length>24){const old=arr.shift();if(old?.marker)map.removeLayer(old.marker)}
+  }
+  function fadeFootprints(arr){
+    const now=Date.now(),ttl=120000;
+    for(let i=arr.length-1;i>=0;i--){
+      const age=now-arr[i].ts;
+      if(age>=ttl){map.removeLayer(arr[i].marker);arr.splice(i,1);continue}
+      const k=Math.max(0,1-age/ttl);
+      arr[i].marker.setStyle({opacity:.34*k,fillOpacity:.28*k});
+    }
+  }
+  function clearFootprints(arr){arr.forEach(x=>{if(x.marker)map.removeLayer(x.marker)});arr.length=0}
+  function fadeAllFootprints(){fadeFootprints(myFootprints);members.forEach(v=>fadeFootprints(v.footprints||[]))}
 
   async function sendPresence(){
     if(role!=='guest'||!guestSession||!lastGuestPos)return;
@@ -281,11 +319,8 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
     if(!me)me=L.marker(myPos,{icon:meIcon(),zIndexOffset:2000}).addTo(map);else me.setLatLng(myPos);
     if(!accCircle)accCircle=L.circle(myPos,{radius:acc,weight:1,opacity:.30,fillOpacity:.06}).addTo(map);else{accCircle.setLatLng(myPos);accCircle.setRadius(acc)}
 
-    if(!prev||moved==null||moved>=4){
-      myTrail.push(myPos);if(myTrail.length>30)myTrail.shift();
-      if(!myTrailLine)myTrailLine=L.polyline(myTrail,{weight:3,opacity:.50,dashArray:'2 9'}).addTo(map);else myTrailLine.setLatLngs(myTrail);
-    }
-    motionInfo.textContent='Рух: '+(Number.isFinite(speed)?(speed*3.6).toFixed(speed*3.6<10?1:0)+' км/год':'—')+' • слід '+myTrail.length+'/30';
+    if(prev&&moved!=null&&moved>=4)addFootprint(myFootprints,prev,true);
+    motionInfo.textContent='Рух: '+(Number.isFinite(speed)?(speed*3.6).toFixed(speed*3.6<10?1:0)+' км/год':'—')+' • живі сліди '+myFootprints.length;
 
     if(center)map.setView(myPos,18);
     updateWeather(lat,lng);
@@ -322,11 +357,12 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
       const age=now-v.lastSeen;
       if(age>10*60*1000){drop(id);return}
       live++;
-      if(v.marker)v.marker.setOpacity(age>120000?.32:age>45000?.58:1);
+      const dist=myPos?distanceM(myPos,[v.lat,v.lng]):null,bear=myPos?bearingDeg(myPos,[v.lat,v.lng]):null;
+      if(v.marker){v.marker.setOpacity(age>120000?.32:age>45000?.58:1);v.marker.setIcon(pIcon(myPos?bearingArrow(bear)+' '+fmtDistance(dist):''))}
       const s=document.createElement('span');s.className='pill';
-      s.textContent=v.name+' • '+(myPos?fmtDistance(distanceM(myPos,[v.lat,v.lng])):'?')+' • '+fmtAge(age);
+      s.textContent=v.name+' • '+(myPos?bearingArrow(bear)+' '+fmtDistance(dist):'?')+' • '+fmtAge(age);
       peopleEl.appendChild(s);
-      if(v.marker)v.marker.bindPopup('<b>'+esc(v.name)+'</b><br>'+(myPos?fmtDistance(distanceM(myPos,[v.lat,v.lng])):'відстань ?')+' • '+fmtAge(age)+(v.accuracy?'<br>точність ≈ '+Math.round(v.accuracy)+' м':''));
+      if(v.marker)v.marker.bindPopup('<b>'+esc(v.name)+'</b><br>'+(myPos?bearingArrow(bear)+' '+fmtDistance(dist):'відстань ?')+' • '+fmtAge(age)+(v.accuracy?'<br>точність ≈ '+Math.round(v.accuracy)+' м':''));
     });
     countBadge.textContent=String(live);countBadge.style.display=live?'block':'none';
   }
@@ -336,21 +372,20 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
     const id=String(d.id||''),pos=[d.lat,d.lng],seen=Date.parse(d.last_seen)||Date.now(),name=(d.name||'Гість').slice(0,32);
     let m=members.get(id);
     if(!m){
-      m={name,lat:d.lat,lng:d.lng,accuracy:d.accuracy,lastSeen:seen,marker:L.marker(pos,{icon:pIcon(),zIndexOffset:1200}).addTo(map),trail:[pos],trailLine:null};
-      m.trailLine=L.polyline(m.trail,{weight:2,opacity:.30,dashArray:'1 8'}).addTo(map);
+      m={name,lat:d.lat,lng:d.lng,accuracy:d.accuracy,lastSeen:seen,marker:L.marker(pos,{icon:pIcon(),zIndexOffset:1200}).addTo(map),footprints:[]};
       members.set(id,m);
     }else{
       const old=[m.lat,m.lng];
       m.name=name;m.lat=d.lat;m.lng=d.lng;m.accuracy=d.accuracy;m.lastSeen=seen;
       m.marker.setLatLng(pos);m.marker.setOpacity(1);
-      if(distanceM(old,pos)>=4){m.trail.push(pos);if(m.trail.length>20)m.trail.shift();m.trailLine.setLatLngs(m.trail)}
+      if(distanceM(old,pos)>=4)addFootprint(m.footprints,old,false)
     }
   }
 
   function drop(id){
     const m=members.get(id);
     if(m&&m.marker)map.removeLayer(m.marker);
-    if(m&&m.trailLine)map.removeLayer(m.trailLine);
+    if(m&&m.footprints)clearFootprints(m.footprints);
     members.delete(id);
   }
 
@@ -358,6 +393,7 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
     const pts=[];
     if(myPos)pts.push(myPos);
     members.forEach(v=>pts.push([v.lat,v.lng]));
+    if(meetingPoint)pts.push(meetingPoint);
     if(!pts.length){toast('Поки немає точок');return}
     if(pts.length===1){map.setView(pts[0],18);return}
     map.fitBounds(L.latLngBounds(pts),{padding:[55,55],maxZoom:17});
@@ -378,9 +414,41 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
     }catch(_){}
   }
 
+  async function refreshMeeting(){
+    try{
+      const r=await meeting('get',meetingAuth());
+      if(!r.ok)return;
+      const d=r.data.meeting;
+      if(!d){
+        meetingPoint=null;meetingInfo.textContent='Не встановлена';
+        if(meetingMarker){map.removeLayer(meetingMarker);meetingMarker=null}
+        return;
+      }
+      meetingPoint=[Number(d.lat),Number(d.lng)];
+      if(!meetingMarker)meetingMarker=L.marker(meetingPoint,{icon:meetingIcon(),zIndexOffset:1000}).addTo(map);else meetingMarker.setLatLng(meetingPoint);
+      const dist=myPos?distanceM(myPos,meetingPoint):null,bear=myPos?bearingDeg(myPos,meetingPoint):null;
+      meetingInfo.textContent='Активна'+(myPos?' • '+bearingArrow(bear)+' '+fmtDistance(dist):'');
+      meetingMarker.bindPopup('<b>Точка зустрічі</b>'+(myPos?'<br>'+bearingArrow(bear)+' '+fmtDistance(dist):''));
+    }catch(_){}
+  }
+
+  async function setMeetingAt(latlng){
+    meetingMode=false;
+    try{
+      const r=await meeting('set',{...meetingAuth(),lat:latlng.lat,lng:latlng.lng});
+      if(!r.ok)throw new Error();
+      toast('Точку зустрічі встановлено ✦');
+      await refreshMeeting();
+    }catch(_){toast('Не вдалося встановити точку')}
+  }
+
   document.getElementById('find').onclick=()=>{gpsOnce(true);closeMenu()};
   document.getElementById('showAll').onclick=()=>{fitAll();closeMenu()};
-  document.getElementById('clearTrail').onclick=()=>{myTrail=[];if(myTrailLine){map.removeLayer(myTrailLine);myTrailLine=null}motionInfo.textContent='Рух: слід очищено';toast('Слід очищено')};
+  document.getElementById('clearTrail').onclick=()=>{clearFootprints(myFootprints);motionInfo.textContent='Рух: сліди очищено';toast('Сліди очищено')};
+  document.getElementById('setMeeting').onclick=()=>{meetingMode=true;closeMenu();toast('Торкнись місця на карті для зустрічі',4000)};
+  document.getElementById('clearMeeting').onclick=async()=>{try{const r=await meeting('clear',meetingAuth());if(!r.ok)throw new Error();meetingPoint=null;if(meetingMarker){map.removeLayer(meetingMarker);meetingMarker=null}meetingInfo.textContent='Не встановлена';toast('Точку зустрічі прибрано')}catch(_){toast('Не вдалося прибрати точку')}};
+  map.on('click',e=>{if(meetingMode)setMeetingAt(e.latlng)});
+  map.on('contextmenu',e=>setMeetingAt(e.latlng));
 
   document.getElementById('invite').onclick=async()=>{
     try{
@@ -418,6 +486,10 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
   };
 
   const localHour=new Date().getHours();document.body.classList.toggle('night',localHour<6||localHour>=20);
+
+  refreshMeeting();
+  setInterval(refreshMeeting,5000);
+  setInterval(fadeAllFootprints,5000);
 
   if(role==='guest'){
     const n=localStorage.getItem('liveMapName')||'';
