@@ -5,14 +5,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#17100b">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Жива карта поруч</title>
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Приватна жива карта поруч</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body,#map{margin:0;width:100%;height:100%;overflow:hidden}
-body{font-family:Georgia,"Times New Roman",serif;background:#d8c08e;color:#432b1d}
+body{font-family:Georgia,"Times New Roman",serif;background:#120c08;color:#432b1d}
+#appShell{display:none;width:100%;height:100%}
 #map{position:absolute;inset:0;background:#d7c294}
 .leaflet-container{font-family:Georgia,"Times New Roman",serif;filter:sepia(.40) saturate(.78) contrast(.96)}
 .vignette{position:fixed;inset:0;z-index:500;pointer-events:none;background:radial-gradient(circle at 50% 50%,transparent 45%,rgba(83,49,26,.10) 76%,rgba(48,27,15,.25) 100%);mix-blend-mode:multiply}
@@ -29,6 +32,7 @@ button:active{transform:scale(.97)}
 .small{margin-top:5px;color:#6b4b35;line-height:1.35}
 .people{margin-top:7px;display:flex;gap:5px;flex-wrap:wrap}
 .pill{padding:4px 7px;border-radius:999px;background:rgba(255,250,235,.72);border:1px solid rgba(95,61,32,.16)}
+.privateBadge{display:inline-block;margin-left:6px;padding:3px 7px;border-radius:999px;background:#5e402a;color:#f5e7c9;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
 .me{width:22px;height:22px;border-radius:50%;background:#5d3a24;border:3px solid #f6e3b9;box-shadow:0 0 0 2px #5d3a24,0 0 24px rgba(93,58,36,.55);position:relative}
 .me:after{content:"Я";position:absolute;left:50%;top:-28px;transform:translateX(-50%);background:#f5e8ca;border:1px solid rgba(95,61,32,.28);padding:3px 7px;border-radius:999px;font-size:11px;font-weight:bold;white-space:nowrap}
 .person{position:relative;width:30px;height:32px}
@@ -41,53 +45,148 @@ button:active{transform:scale(.97)}
 .dialog{width:min(92vw,460px);background:linear-gradient(#efe0bd,#dfc291);border-radius:18px;padding:18px;border:1px solid rgba(95,61,32,.35);box-shadow:0 25px 80px rgba(0,0,0,.4)}
 input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,.25);background:rgba(255,250,235,.8);font:inherit;color:#432b1d}
 .row{display:flex;gap:7px;margin-top:10px}.row button{flex:1}
-@media(max-width:650px){.status{max-width:49vw}.actions button{padding:7px 8px;font-size:10px}}
+#lock{position:fixed;z-index:5000;inset:0;display:grid;place-items:center;padding:18px;background:radial-gradient(circle at 50% 20%,#4a3321 0,#21150e 44%,#090604 100%);color:#ead7b5;text-align:center}
+.lockCard{width:min(92vw,480px);padding:28px;border-radius:22px;border:1px solid rgba(199,169,111,.30);background:rgba(32,20,13,.74);box-shadow:0 30px 90px rgba(0,0,0,.48)}
+.lockSeal{width:88px;height:88px;margin:0 auto 18px;border-radius:50%;display:grid;place-items:center;border:1px solid rgba(199,169,111,.55);font-size:35px;box-shadow:inset 0 0 28px rgba(0,0,0,.35)}
+.lockCard h1{margin:0 0 8px;font-size:25px}.lockCard p{margin:0;color:#bda27b;font-size:12px;line-height:1.5}
+.lockState{margin-top:14px;font-size:11px;color:#d8c39b}
+@media(max-width:650px){.status{max-width:48vw}.actions button{padding:7px 8px;font-size:10px}}
 </style>
 </head>
 <body>
-<div id="map"></div><div class="vignette"></div>
-<div class="top">
-  <div class="card status" id="status">Запускаю GPS…</div>
-  <div class="card actions">
-    <button id="find">Знайти мене</button>
-    <button id="invite">Запросити</button>
-    <button id="clear">Очистити</button>
+<div id="lock">
+  <div class="lockCard">
+    <div class="lockSeal">✦</div>
+    <h1>Приватна жива карта</h1>
+    <p>Карта відкривається тільки власнику або за одноразовим приватним запрошенням.</p>
+    <div class="lockState" id="lockState">Перевіряю доступ…</div>
   </div>
 </div>
-<div class="bottom">
-  <div class="card info">
-    <b>Жива карта поруч</b>
-    <div class="coords" id="coords">Моя позиція: очікую GPS…</div>
-    <div class="people" id="people"></div>
-    <div class="small">Інші люди з’являються лише після того, як самі відкриють запрошення, введуть ім’я або псевдонім і дозволять геолокацію.</div>
+
+<div id="appShell">
+  <div id="map"></div><div class="vignette"></div>
+  <div class="top">
+    <div class="card status" id="status">Запускаю GPS…</div>
+    <div class="card actions">
+      <button id="find">Знайти мене</button>
+      <button id="invite">Запросити</button>
+      <button id="revoke">Закрити гостям</button>
+      <button id="clear">Очистити</button>
+    </div>
+  </div>
+  <div class="bottom">
+    <div class="card info">
+      <b>Жива карта поруч <span class="privateBadge">private</span></b>
+      <div class="coords" id="coords">Моя позиція: очікую GPS…</div>
+      <div class="people" id="people"></div>
+      <div class="small">Геопозиція не зберігається в базі карти. Гість потрапляє сюди лише після одноразового запрошення, введення імені/псевдоніма та власного дозволу на GPS.</div>
+    </div>
   </div>
 </div>
 
 <div class="modal" id="join">
   <div class="dialog">
-    <b>Приєднатися до живої карти</b>
-    <p class="small">Введи ім’я або псевдонім. Координати передаватимуться власнику карти, поки сторінка відкрита.</p>
+    <b>Приєднатися до приватної карти</b>
+    <p class="small">Запрошення вже перевірено. Введи ім’я або псевдонім і підтвердь передачу своєї геолокації власнику карти.</p>
     <input id="name" maxlength="32" placeholder="Ім’я або псевдонім">
     <div class="row"><button id="cancelJoin">Скасувати</button><button id="okJoin">Поділитися локацією</button></div>
   </div>
 </div>
+
 <div class="modal" id="share">
   <div class="dialog">
-    <b>Запросити людину</b>
-    <p class="small">Надішли це посилання. Людина з’явиться тільки після власної згоди на геолокацію.</p>
+    <b>Одноразове приватне запрошення</b>
+    <p class="small">Посилання діє 24 години й може бути активоване лише один раз. Після активації цей браузер гостя отримує приватну сесію на 30 днів.</p>
     <input id="shareLink" readonly>
     <div class="row"><button id="closeShare">Закрити</button><button id="copy">Копіювати</button></div>
   </div>
 </div>
 
 <script>
-(function(){
+(async function(){
+  const ACCESS_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-access';
+  const lock=document.getElementById('lock'),lockState=document.getElementById('lockState'),appShell=document.getElementById('appShell');
   const statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),peopleEl=document.getElementById('people');
   const joinModal=document.getElementById('join'),shareModal=document.getElementById('share'),nameInput=document.getElementById('name'),shareLink=document.getElementById('shareLink');
+  const inviteBtn=document.getElementById('invite'),revokeBtn=document.getElementById('revoke');
+  let role=null,ownerToken=null,guestSession=null,joinId=null;
+
+  async function api(action,payload={}){
+    const r=await fetch(ACCESS_API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...payload}),cache:'no-store'});
+    let data={}; try{data=await r.json()}catch(_){}
+    return {ok:r.ok && data.ok,data,status:r.status};
+  }
+
+  const hashParams=new URLSearchParams(location.hash.replace(/^#/,''));
+  const ownerFromLink=hashParams.get('owner');
+  const inviteFromLink=hashParams.get('invite');
+  const joinFromLink=hashParams.get('join');
+
+  try{
+    if(ownerFromLink){
+      lockState.textContent='Перевіряю ключ власника…';
+      const r=await api('validate_owner',{owner_token:ownerFromLink});
+      if(r.ok){
+        ownerToken=ownerFromLink;role='owner';
+        localStorage.setItem('liveMapOwnerToken',ownerToken);
+        localStorage.removeItem('liveMapGuestSession');
+        localStorage.removeItem('liveMapJoinId');
+        history.replaceState(null,'',location.pathname);
+      }
+    }
+
+    if(!role && inviteFromLink && joinFromLink){
+      lockState.textContent='Перевіряю одноразове запрошення…';
+      const r=await api('consume_invite',{invite_token:inviteFromLink});
+      if(r.ok){
+        role='guest';guestSession=r.data.session_token;joinId=joinFromLink;
+        localStorage.setItem('liveMapGuestSession',guestSession);
+        localStorage.setItem('liveMapJoinId',joinId);
+        localStorage.removeItem('liveMapOwnerToken');
+        history.replaceState(null,'',location.pathname);
+      }else{
+        lockState.textContent='Запрошення вже використане, прострочене або відкликане.';
+      }
+    }
+
+    if(!role){
+      const storedOwner=localStorage.getItem('liveMapOwnerToken');
+      if(storedOwner){
+        lockState.textContent='Перевіряю збережений доступ власника…';
+        const r=await api('validate_owner',{owner_token:storedOwner});
+        if(r.ok){role='owner';ownerToken=storedOwner}
+        else localStorage.removeItem('liveMapOwnerToken');
+      }
+    }
+
+    if(!role){
+      const storedSession=localStorage.getItem('liveMapGuestSession');
+      const storedJoin=localStorage.getItem('liveMapJoinId');
+      if(storedSession && storedJoin){
+        lockState.textContent='Перевіряю гостьову сесію…';
+        const r=await api('validate_session',{session_token:storedSession});
+        if(r.ok){role='guest';guestSession=storedSession;joinId=storedJoin}
+        else{
+          localStorage.removeItem('liveMapGuestSession');
+          localStorage.removeItem('liveMapJoinId');
+        }
+      }
+    }
+  }catch(e){
+    lockState.textContent='Не вдалося перевірити приватний доступ. Перевір інтернет.';
+  }
+
+  if(!role){
+    if(lockState.textContent==='Перевіряю доступ…') lockState.textContent='Доступ закритий. Потрібне приватне запрошення.';
+    return;
+  }
+
+  lock.style.display='none';
+  appShell.style.display='block';
+  if(role!=='owner'){inviteBtn.style.display='none';revokeBtn.style.display='none'}
+
   let map=null,me=null,accCircle=null,myPos=null,watchId=null,peer=null,roomId=null;
   const conns=new Map(),members=new Map();
-  const params=new URLSearchParams(location.hash.replace(/^#/,''));
-  const joinId=params.get('join');
 
   if(typeof L==='undefined'){
     statusEl.textContent='Не вдалося завантажити карту. Перевір інтернет.';
@@ -111,7 +210,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     if(!accCircle) accCircle=L.circle(myPos,{radius:acc,weight:1,opacity:.35,fillOpacity:.08}).addTo(map);
     else {accCircle.setLatLng(myPos);accCircle.setRadius(acc)}
     if(center) map.setView(myPos,18);
-    if(joinId) sendPos(p);
+    if(role==='guest') sendPos(p);
   }
 
   function gpsOnce(center){
@@ -156,7 +255,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   function host(){
     if(typeof Peer==='undefined'){statusEl.textContent='Живе з’єднання не завантажилось';return}
     peer=new Peer();
-    peer.on('open',id=>{roomId=id;statusEl.textContent=myPos?'Карта готова • можна запрошувати':'Карта готова • очікую GPS'});
+    peer.on('open',id=>{roomId=id;statusEl.textContent=myPos?'Приватна карта готова • можна запрошувати':'Приватна карта готова • очікую GPS'});
     peer.on('connection',c=>{
       conns.set(c.peer,c);
       c.on('data',d=>{if(d&&d.type==='position')upsert(c.peer,d)});
@@ -170,8 +269,8 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     peer=new Peer();
     peer.on('open',()=>{
       const c=peer.connect(id,{reliable:true});
-      c.on('open',()=>{conns.set(id,c);statusEl.textContent='Підключено • шукаю GPS';gpsOnce(true)});
-      c.on('close',()=>statusEl.textContent='З’єднання закрито');
+      c.on('open',()=>{conns.set(id,c);statusEl.textContent='Підключено приватно • шукаю GPS';gpsOnce(true)});
+      c.on('close',()=>statusEl.textContent='З’єднання з власником закрито');
     });
   }
 
@@ -182,18 +281,45 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   }
 
   document.getElementById('find').onclick=()=>gpsOnce(true);
-  document.getElementById('invite').onclick=()=>{
-    if(!roomId){statusEl.textContent='Кімната ще створюється…';return}
-    shareLink.value=location.href.split('#')[0]+'#join='+encodeURIComponent(roomId);
-    shareModal.classList.add('on');
+
+  inviteBtn.onclick=async()=>{
+    if(role!=='owner')return;
+    if(!roomId){statusEl.textContent='Приватна кімната ще створюється…';return}
+    inviteBtn.disabled=true;
+    statusEl.textContent='Створюю одноразове запрошення…';
+    try{
+      const r=await api('create_invite',{owner_token:ownerToken});
+      if(!r.ok)throw new Error('invite');
+      shareLink.value=location.origin+location.pathname+'#invite='+encodeURIComponent(r.data.invite_token)+'&join='+encodeURIComponent(roomId);
+      shareModal.classList.add('on');
+      statusEl.textContent='Одноразове запрошення готове';
+    }catch(_){
+      statusEl.textContent='Не вдалося створити приватне запрошення';
+    }finally{inviteBtn.disabled=false}
   };
+
+  revokeBtn.onclick=async()=>{
+    if(role!=='owner')return;
+    revokeBtn.disabled=true;
+    statusEl.textContent='Закриваю всі гостьові доступи…';
+    try{
+      const r=await api('revoke_all_guests',{owner_token:ownerToken});
+      if(!r.ok)throw new Error('revoke');
+      conns.forEach(c=>{try{c.close()}catch(_){}});conns.clear();
+      Array.from(members.keys()).forEach(drop);
+      statusEl.textContent='Усі гостьові доступи відкликано';
+    }catch(_){
+      statusEl.textContent='Не вдалося відкликати гостьові доступи';
+    }finally{revokeBtn.disabled=false}
+  };
+
   document.getElementById('closeShare').onclick=()=>shareModal.classList.remove('on');
   document.getElementById('copy').onclick=async()=>{
-    try{await navigator.clipboard.writeText(shareLink.value);statusEl.textContent='Посилання скопійовано'}
+    try{await navigator.clipboard.writeText(shareLink.value);statusEl.textContent='Приватне посилання скопійовано'}
     catch(_){shareLink.select();document.execCommand('copy')}
   };
   document.getElementById('clear').onclick=()=>Array.from(members.keys()).forEach(drop);
-  document.getElementById('cancelJoin').onclick=()=>{joinModal.classList.remove('on');statusEl.textContent='Приєднання скасовано'};
+  document.getElementById('cancelJoin').onclick=()=>{joinModal.classList.remove('on');statusEl.textContent='Передачу геолокації не ввімкнено'};
   document.getElementById('okJoin').onclick=()=>{
     const n=(nameInput.value||'').trim();
     if(!n){nameInput.focus();return}
@@ -202,13 +328,15 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     guest(joinId);
   };
 
-  if(joinId){
+  if(role==='guest'){
     nameInput.value=localStorage.getItem('liveMapName')||'';
     joinModal.classList.add('on');
+    statusEl.textContent='Приватний доступ підтверджено';
   }else{
     host();
     gpsOnce(true);
   }
+
   renderPeople();
 })();
 </script>
