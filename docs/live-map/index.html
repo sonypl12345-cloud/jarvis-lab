@@ -35,11 +35,11 @@ button:active{transform:scale(.97)}
 .privateBadge{display:inline-block;margin-left:6px;padding:3px 7px;border-radius:999px;background:#5e402a;color:#f5e7c9;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
 .me{width:22px;height:22px;border-radius:50%;background:#5d3a24;border:3px solid #f6e3b9;box-shadow:0 0 0 2px #5d3a24,0 0 24px rgba(93,58,36,.55);position:relative}
 .me:after{content:"Я";position:absolute;left:50%;top:-28px;transform:translateX(-50%);background:#f5e8ca;border:1px solid rgba(95,61,32,.28);padding:3px 7px;border-radius:999px;font-size:11px;font-weight:bold;white-space:nowrap}
-.person{position:relative;width:30px;height:32px}
-.person:before,.person:after{content:"";position:absolute;width:8px;height:14px;border-radius:60% 60% 46% 46%;background:#563625}
-.person:before{left:3px;top:10px;transform:rotate(-24deg)}
-.person:after{right:3px;top:6px;transform:rotate(20deg)}
-.nm{position:absolute;left:50%;top:-21px;transform:translateX(-50%);white-space:nowrap;background:#f5e8ca;border:1px solid rgba(95,61,32,.28);padding:3px 7px;border-radius:999px;font-size:11px}
+.person{position:relative;width:18px;height:18px;border-radius:50%;background:#6b432a;border:3px solid #f5dfb7;box-shadow:0 0 0 2px rgba(79,47,27,.78),0 0 18px rgba(107,67,42,.48)}
+.person:after{content:"";position:absolute;inset:-7px;border-radius:50%;border:1px solid rgba(107,67,42,.28);animation:personPulse 2.2s ease-out infinite}
+.nm{position:absolute;left:50%;top:-28px;transform:translateX(-50%);white-space:nowrap;background:#f5e8ca;border:1px solid rgba(95,61,32,.28);padding:3px 7px;border-radius:999px;font-size:11px;box-shadow:0 3px 9px rgba(55,28,12,.14)}
+@keyframes personPulse{0%{transform:scale(.75);opacity:.75}70%,100%{transform:scale(1.8);opacity:0}}
+@media (prefers-reduced-motion:reduce){.person:after{animation:none;opacity:.25}}
 .modal{position:fixed;z-index:2000;inset:0;background:rgba(20,10,5,.55);display:none;place-items:center;padding:16px;backdrop-filter:blur(4px)}
 .modal.on{display:grid}
 .dialog{width:min(92vw,460px);background:linear-gradient(#efe0bd,#dfc291);border-radius:18px;padding:18px;border:1px solid rgba(95,61,32,.35);box-shadow:0 25px 80px rgba(0,0,0,.4)}
@@ -79,7 +79,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
       <b>Жива карта поруч <span class="privateBadge">private</span></b>
       <div class="coords" id="coords">Моя позиція: очікую GPS…</div>
       <div class="people" id="people"></div>
-      <div class="small">Геопозиція не зберігається в базі карти. Гість потрапляє сюди лише після одноразового запрошення, введення імені/псевдоніма та власного дозволу на GPS.</div>
+      <div class="small">Люди показуються як живі точки з іменами й рухаються разом зі своєю GPS-позицією. Геопозиція не зберігається в базі карти. Гість потрапляє сюди лише після одноразового запрошення, введення імені/псевдоніма та власного дозволу на GPS.</div>
     </div>
   </div>
 </div>
@@ -199,7 +199,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
 
   function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
   function meIcon(){return L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[22,22],iconAnchor:[11,11]})}
-  function pIcon(n){return L.divIcon({className:'',html:'<div class="person"><div class="nm">'+esc(n)+'</div></div>',iconSize:[40,44],iconAnchor:[20,36]})}
+  function pIcon(n){return L.divIcon({className:'',html:'<div class="person"><div class="nm">'+esc(n)+'</div></div>',iconSize:[18,18],iconAnchor:[9,9]})}
 
   function setMe(p,center){
     const lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy||20;
