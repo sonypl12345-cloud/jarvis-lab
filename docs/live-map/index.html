@@ -17,7 +17,9 @@ html,body,#map{margin:0;width:100%;height:100%;overflow:hidden}
 body{font-family:Georgia,"Times New Roman",serif;background:#120c08;color:#432b1d}
 #appShell{display:none;width:100%;height:100%}
 #map{position:absolute;inset:0;background:#d7c294}
-.leaflet-container{font-family:Georgia,"Times New Roman",serif;filter:sepia(.40) saturate(.78) contrast(.96)}
+.leaflet-container{font-family:Georgia,"Times New Roman",serif;filter:sepia(.40) saturate(.78) contrast(.96);transition:filter .8s ease}
+body.night .leaflet-container{filter:sepia(.55) saturate(.65) brightness(.58) contrast(1.08)}
+body.night .vignette{background:radial-gradient(circle at 50% 50%,rgba(8,14,28,.03) 30%,rgba(12,16,31,.28) 72%,rgba(5,8,20,.60) 100%)}
 .vignette{position:fixed;inset:0;z-index:500;pointer-events:none;background:radial-gradient(circle at 50% 50%,transparent 45%,rgba(83,49,26,.10) 76%,rgba(48,27,15,.25) 100%);mix-blend-mode:multiply}
 .card{background:rgba(247,235,208,.94);border:1px solid rgba(95,61,32,.28);box-shadow:0 8px 24px rgba(0,0,0,.18);border-radius:16px;color:#432b1d;backdrop-filter:blur(7px)}
 .top{position:fixed;z-index:900;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;display:flex;gap:8px;justify-content:space-between;align-items:flex-start}
@@ -33,6 +35,15 @@ button[disabled]{opacity:.55}
 .small{margin-top:5px;color:#6b4b35;line-height:1.35}
 .people{margin-top:7px;display:flex;gap:5px;flex-wrap:wrap}
 .pill{padding:4px 7px;border-radius:999px;background:rgba(255,250,235,.72);border:1px solid rgba(95,61,32,.16)}
+.radar{display:none;position:relative;width:176px;height:176px;margin:10px auto 2px;border-radius:50%;border:1px solid rgba(95,61,32,.40);background:radial-gradient(circle,rgba(255,250,235,.76),rgba(222,195,143,.56));overflow:hidden;box-shadow:inset 0 0 30px rgba(83,49,26,.12)}
+.radar.on{display:block}
+.radarRing{position:absolute;left:50%;top:50%;border:1px solid rgba(95,61,32,.20);border-radius:50%;transform:translate(-50%,-50%)}
+.radarRing.r1{width:56px;height:56px}.radarRing.r2{width:108px;height:108px}.radarRing.r3{width:158px;height:158px}
+.radarAxis:before,.radarAxis:after{content:"";position:absolute;background:rgba(95,61,32,.12)}
+.radarAxis:before{width:1px;height:100%;left:50%;top:0}.radarAxis:after{height:1px;width:100%;top:50%;left:0}
+.radarMe{position:absolute;left:50%;top:50%;width:12px;height:12px;border-radius:50%;transform:translate(-50%,-50%);background:#5d3a24;border:2px solid #f6e3b9;z-index:3}
+.radarDot{position:absolute;width:13px;height:13px;min-width:13px;padding:0;border-radius:50%;transform:translate(-50%,-50%);background:#8a5634;border:2px solid #f7e7c5;box-shadow:0 0 0 1px rgba(75,43,24,.65);z-index:2}
+.radarLegend{text-align:center;font-size:9px;color:#6b4b35;margin-top:3px}
 .privateBadge{display:inline-block;margin-left:6px;padding:3px 7px;border-radius:999px;background:#5e402a;color:#f5e7c9;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
 .me{width:22px;height:22px;border-radius:50%;background:#5d3a24;border:3px solid #f6e3b9;box-shadow:0 0 0 2px #5d3a24,0 0 24px rgba(93,58,36,.55);position:relative}
 .me:after{content:"Я";position:absolute;left:50%;top:-28px;transform:translateX(-50%);background:#f5e8ca;border:1px solid rgba(95,61,32,.28);padding:3px 7px;border-radius:999px;font-size:11px;font-weight:bold;white-space:nowrap}
@@ -80,9 +91,12 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     <div class="card info">
       <b>Жива карта поруч <span class="privateBadge">private</span></b>
       <div class="coords" id="coords">Моя позиція: очікую GPS…</div>
+      <div class="coords" id="motionInfo">Рух: очікую GPS…</div>
       <div class="coords" id="scanInfo">Радар вимкнений</div>
+      <div id="radar" class="radar" aria-label="Радар анонімних радіосигналів"><div class="radarRing r1"></div><div class="radarRing r2"></div><div class="radarRing r3"></div><div class="radarAxis"></div><div class="radarMe" title="Я"></div></div>
+      <div class="radarLegend" id="radarLegend"></div>
       <div class="people" id="people"></div>
-      <div class="small">Живі учасники показуються за власним GPS. Кнопка «Сканувати поруч» робить один короткий Wi‑Fi scan через GENESIS Bridge і показує анонімні радіоточки. Їхній напрямок на карті умовний: телефон бачить силу сигналу, але не координати передавача. Друге натискання прибирає точки й нічого більше не сканує.</div>
+      <div class="small">Твоя GPS-точка залишає короткий слід. Підключені учасники показують відстань і час останнього сигналу. Радар тепер окремий від географічної карти: сила Wi‑Fi сигналу впливає лише на близькість до центру, а напрямок лишається умовним.</div>
     </div>
   </div>
 </div>
@@ -110,7 +124,8 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   const ACCESS_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-access';
   const SCAN_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-scan';
   const lock=document.getElementById('lock'),lockState=document.getElementById('lockState'),appShell=document.getElementById('appShell');
-  const statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),scanInfo=document.getElementById('scanInfo'),peopleEl=document.getElementById('people');
+  const statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),motionInfo=document.getElementById('motionInfo'),scanInfo=document.getElementById('scanInfo'),peopleEl=document.getElementById('people');
+  const radar=document.getElementById('radar'),radarLegend=document.getElementById('radarLegend');
   const joinModal=document.getElementById('join'),shareModal=document.getElementById('share'),nameInput=document.getElementById('name'),shareLink=document.getElementById('shareLink');
   const inviteBtn=document.getElementById('invite'),revokeBtn=document.getElementById('revoke'),scanBtn=document.getElementById('scan');
   let role=null,ownerToken=null,guestSession=null,joinId=null;
@@ -200,7 +215,8 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   }
 
   let map=null,me=null,accCircle=null,myPos=null,watchId=null,peer=null,roomId=null;
-  let scanActive=false,scanBusy=false,signalMarkers=[];
+  let myTrail=[],myTrailLine=null,lastMeTs=0;
+  let scanActive=false,scanBusy=false;
   const conns=new Map(),members=new Map();
 
   if(typeof L==='undefined'){
@@ -208,24 +224,33 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     return;
   }
 
-  map=L.map('map',{zoomControl:false}).setView([52.2297,21.0122],15);
+  map=L.map('map',{zoomControl:false}).setView([20,0],2);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
   L.control.zoom({position:'bottomright'}).addTo(map);
 
   function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
   function meIcon(){return L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[22,22],iconAnchor:[11,11]})}
   function pIcon(n){return L.divIcon({className:'',html:'<div class="person"><div class="nm">'+esc(n)+'</div></div>',iconSize:[18,18],iconAnchor:[9,9]})}
+  function distanceM(a,b){if(!a||!b)return null;const R=6371000,t=x=>x*Math.PI/180,d1=t(b[0]-a[0]),d2=t(b[1]-a[1]),q=Math.sin(d1/2)**2+Math.cos(t(a[0]))*Math.cos(t(b[0]))*Math.sin(d2/2)**2;return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q))}
+  function fmtDistance(m){if(m==null||!Number.isFinite(m))return '?';return m<1000?Math.max(1,Math.round(m))+' м':(m/1000).toFixed(m<10000?1:0)+' км'}
+  function fmtAge(ms){if(ms<15000)return 'зараз';if(ms<60000)return Math.round(ms/1000)+' с тому';if(ms<3600000)return Math.round(ms/60000)+' хв тому';return Math.round(ms/3600000)+' год тому'}
 
   function setMe(p,center){
-    const lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy||20;
-    myPos=[lat,lng];
+    const lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy||20,next=[lat,lng],prev=myPos,now=Date.now();
+    const moved=prev?distanceM(prev,next):null;
+    let speed=Number(p.coords.speed);
+    if(!Number.isFinite(speed)&&moved!=null&&lastMeTs)speed=moved/Math.max(1,(now-lastMeTs)/1000);
+    myPos=next;lastMeTs=now;
     coordsEl.textContent='Моя позиція: '+lat.toFixed(5)+', '+lng.toFixed(5)+' • точність ≈ '+Math.round(acc)+' м';
+    const speedText=Number.isFinite(speed)?(speed*3.6).toFixed(speed*3.6<10?1:0)+' км/год':'—';
+    if(!me)me=L.marker(myPos,{icon:meIcon(),zIndexOffset:2000}).addTo(map);else me.setLatLng(myPos);
+    if(!accCircle)accCircle=L.circle(myPos,{radius:acc,weight:1,opacity:.35,fillOpacity:.08}).addTo(map);else{accCircle.setLatLng(myPos);accCircle.setRadius(acc)}
+    if(!prev||moved==null||moved>=4){myTrail.push(myPos);if(myTrail.length>30)myTrail.shift();if(!myTrailLine)myTrailLine=L.polyline(myTrail,{weight:3,opacity:.58,dashArray:'2 9'}).addTo(map);else myTrailLine.setLatLngs(myTrail)}
+    motionInfo.textContent='Рух: '+speedText+' • слід '+myTrail.length+'/30';
     statusEl.textContent='Ти на карті • точність ≈ '+Math.round(acc)+' м';
-    if(!me) me=L.marker(myPos,{icon:meIcon(),zIndexOffset:2000}).addTo(map); else me.setLatLng(myPos);
-    if(!accCircle) accCircle=L.circle(myPos,{radius:acc,weight:1,opacity:.35,fillOpacity:.08}).addTo(map);
-    else {accCircle.setLatLng(myPos);accCircle.setRadius(acc)}
-    if(center) map.setView(myPos,18);
-    if(role==='guest') sendPos(p);
+    if(center)map.setView(myPos,18);
+    if(role==='guest')sendPos(p);
+    renderPeople();
   }
 
   function gpsOnce(center){
@@ -251,30 +276,25 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   }
 
   function renderPeople(){
-    peopleEl.innerHTML='';
+    peopleEl.innerHTML='';const now=Date.now();
     if(!members.size){peopleEl.innerHTML='<span class="pill">Ніхто ще не приєднався</span>';return}
-    members.forEach(v=>{const s=document.createElement('span');s.className='pill';s.textContent=v.name;peopleEl.appendChild(s)})
+    members.forEach((v,id)=>{const age=now-v.lastSeen;if(age>600000){drop(id);return}if(v.marker)v.marker.setOpacity(age>120000?.32:age>45000?.58:1);const s=document.createElement('span');s.className='pill';s.textContent=v.name+' • '+(myPos?fmtDistance(distanceM(myPos,[v.lat,v.lng])):'?')+' • '+fmtAge(age);peopleEl.appendChild(s)})
   }
 
   function upsert(id,d){
     if(!d||typeof d.lat!=='number'||typeof d.lng!=='number')return;
-    const n=(d.name||'Гість').slice(0,32);
-    let m=members.get(id);
-    if(!m){m={name:n,marker:L.marker([d.lat,d.lng],{icon:pIcon(n)}).addTo(map)};members.set(id,m)}
-    else{m.name=n;m.marker.setLatLng([d.lat,d.lng]);m.marker.setIcon(pIcon(n))}
+    const n=(d.name||'Гість').slice(0,32),pos=[d.lat,d.lng],now=Date.now();let m=members.get(id);
+    if(!m){m={name:n,marker:L.marker(pos,{icon:pIcon(n)}).addTo(map),trail:[pos],trailLine:null,lastSeen:now,lat:d.lat,lng:d.lng};m.trailLine=L.polyline(m.trail,{weight:2,opacity:.34,dashArray:'1 8'}).addTo(map);members.set(id,m)}
+    else{const old=[m.lat,m.lng];m.name=n;m.lat=d.lat;m.lng=d.lng;m.lastSeen=now;m.marker.setLatLng(pos);m.marker.setIcon(pIcon(n));m.marker.setOpacity(1);if(distanceM(old,pos)>=4){m.trail.push(pos);if(m.trail.length>20)m.trail.shift();m.trailLine.setLatLngs(m.trail)}}
     renderPeople();
   }
 
-  function drop(id){const m=members.get(id);if(m&&m.marker)map.removeLayer(m.marker);members.delete(id);renderPeople()}
+  function markDisconnected(id){const m=members.get(id);if(!m)return;m.lastSeen=Date.now();if(m.marker)m.marker.setOpacity(.58);renderPeople()}
+  function drop(id){const m=members.get(id);if(m&&m.marker)map.removeLayer(m.marker);if(m&&m.trailLine)map.removeLayer(m.trailLine);members.delete(id);renderPeople()}
 
   function clearSignals(){
-    signalMarkers.forEach(m=>map.removeLayer(m));
-    signalMarkers=[];
-    scanActive=false;
-    scanBusy=false;
-    scanBtn.disabled=false;
-    scanBtn.textContent='Сканувати поруч';
-    scanInfo.textContent='Радар вимкнений';
+    radar.querySelectorAll('.radarDot').forEach(x=>x.remove());radar.classList.remove('on');radarLegend.textContent='';
+    scanActive=false;scanBusy=false;scanBtn.disabled=false;scanBtn.textContent='Сканувати поруч';scanInfo.textContent='Радар вимкнений';
   }
 
   function signalBand(rssi){
@@ -285,39 +305,10 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   }
 
   function renderSignals(points){
-    signalMarkers.forEach(m=>map.removeLayer(m));
-    signalMarkers=[];
-    if(!myPos){
-      scanInfo.textContent='Скан завершено, але GPS-позиція «Я» ще не визначена';
-      return;
-    }
-
-    points.forEach((p,i)=>{
-      const rssi=Number(p.rssi);
-      const hex=String(p.id||'0').slice(0,8);
-      const n=parseInt(hex,16)||((i+1)*2654435761>>>0);
-      const angle=(n/0xffffffff)*Math.PI*2;
-      const weak=Math.max(0,Math.min(1,(-45-rssi)/45));
-      const visualRadius=12+weak*55;
-      const lat=myPos[0],lng=myPos[1];
-      const dLat=(Math.cos(angle)*visualRadius)/111320;
-      const dLng=(Math.sin(angle)*visualRadius)/(111320*Math.max(.2,Math.cos(lat*Math.PI/180)));
-      const pos=[lat+dLat,lng+dLng];
-      const dot=L.circleMarker(pos,{
-        radius:rssi>=-60?7:rssi>=-75?6:5,
-        weight:2,
-        opacity:.9,
-        fillOpacity:.72
-      }).addTo(map);
-      const band=Number(p.frequency)>=5925?'6 ГГц':Number(p.frequency)>=4900?'5 ГГц':'2.4 ГГц';
-      dot.bindPopup('<b>Анонімний Wi‑Fi сигнал '+(i+1)+'</b><br>Рівень: '+signalBand(rssi)+' ('+Math.round(rssi)+' dBm)<br>Діапазон: '+band+'<br><small>Точка навколо «Я» умовна: напрямок і метрична відстань не визначаються Wi‑Fi scan.</small>');
-      signalMarkers.push(dot);
-    });
-
-    scanActive=true;
-    scanBtn.disabled=false;
-    scanBtn.textContent='Вимкнути радар';
-    scanInfo.textContent='Радар: '+points.length+' анонімних Wi‑Fi сигналів • один короткий scan завершено';
+    radar.querySelectorAll('.radarDot').forEach(x=>x.remove());
+    points.slice(0,24).forEach((p,i)=>{const rssi=Number(p.rssi),hex=String(p.id||'0').slice(0,8),n=parseInt(hex,16)||((i+1)*2654435761>>>0),angle=(n/0xffffffff)*Math.PI*2,weak=Math.max(0,Math.min(1,(-45-rssi)/45)),radius=20+weak*60,x=50+(Math.cos(angle)*radius/176*100),y=50+(Math.sin(angle)*radius/176*100),band=Number(p.frequency)>=5925?'6 ГГц':Number(p.frequency)>=4900?'5 ГГц':'2.4 ГГц';const dot=document.createElement('button');dot.type='button';dot.className='radarDot';dot.style.left=x+'%';dot.style.top=y+'%';dot.title='Сигнал '+(i+1)+' • '+Math.round(rssi)+' dBm • '+band;dot.onclick=()=>scanInfo.textContent='Сигнал '+(i+1)+': '+signalBand(rssi)+' • '+Math.round(rssi)+' dBm • '+band+' • напрямок умовний';radar.appendChild(dot)});
+    radar.classList.add('on');radarLegend.textContent='центр = Я • ближче = сильніший сигнал • напрямок умовний';
+    scanActive=true;scanBtn.disabled=false;scanBtn.textContent='Вимкнути радар';scanInfo.textContent='Радар: '+points.length+' анонімних Wi‑Fi сигналів • короткий scan завершено';
   }
 
   async function runNearbyScan(){
@@ -374,7 +365,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     peer.on('connection',c=>{
       conns.set(c.peer,c);
       c.on('data',d=>{if(d&&d.type==='position')upsert(c.peer,d)});
-      c.on('close',()=>{conns.delete(c.peer);drop(c.peer)});
+      c.on('close',()=>{conns.delete(c.peer);markDisconnected(c.peer)});
     });
     peer.on('error',()=>{statusEl.textContent='Помилка живого з’єднання'});
   }
@@ -446,10 +437,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     try{await navigator.clipboard.writeText(shareLink.value);statusEl.textContent='Приватне посилання скопійовано'}
     catch(_){shareLink.select();document.execCommand('copy')}
   };
-  document.getElementById('clear').onclick=()=>{
-    Array.from(members.keys()).forEach(drop);
-    clearSignals();
-  };
+  document.getElementById('clear').onclick=()=>{Array.from(members.keys()).forEach(drop);clearSignals();myTrail=[];if(myTrailLine){map.removeLayer(myTrailLine);myTrailLine=null}motionInfo.textContent='Рух: слід очищено'};
   document.getElementById('cancelJoin').onclick=()=>{joinModal.classList.remove('on');statusEl.textContent='Передачу геолокації не ввімкнено'};
   document.getElementById('okJoin').onclick=()=>{
     const n=(nameInput.value||'').trim();
@@ -458,6 +446,9 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     joinModal.classList.remove('on');
     guest(joinId);
   };
+
+  setInterval(renderPeople,10000);
+  const localHour=new Date().getHours();document.body.classList.toggle('night',localHour<6||localHour>=20);
 
   if(role==='guest'){
     nameInput.value=localStorage.getItem('liveMapName')||'';
