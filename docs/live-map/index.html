@@ -135,7 +135,8 @@ window.L=(function(){
     const el=document.createElement('div');
     function applyIcon(icon){
       currentIcon=icon||{};
-      el.className=currentIcon.className||'';
+      const systemClasses=[...el.classList].filter(x=>x.indexOf('maplibregl-marker')===0);
+      el.className=[...systemClasses,currentIcon.className||''].filter(Boolean).join(' ');
       el.innerHTML=currentIcon.html||'';
       if(currentIcon.iconSize){el.style.width=currentIcon.iconSize[0]+'px';el.style.height=currentIcon.iconSize[1]+'px'}
     }
