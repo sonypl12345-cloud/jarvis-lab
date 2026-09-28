@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#17100b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Жива карта поруч</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body,#map{margin:0;width:100%;height:100%;overflow:hidden}
+body{font-family:Georgia,"Times New Roman",serif;background:#d8c08e;color:#432b1d}
+#map{position:absolute;inset:0;background:#d7c294}
+.leaflet-container{font-family:Georgia,"Times New Roman",serif;filter:sepia(.40) saturate(.78) contrast(.96)}
+.vignette{position:fixed;inset:0;z-index:500;pointer-events:none;background:radial-gradient(circle at 50% 50%,transparent 45%,rgba(83,49,26,.10) 76%,rgba(48,27,15,.25) 100%);mix-blend-mode:multiply}
+.card{background:rgba(247,235,208,.94);border:1px solid rgba(95,61,32,.28);box-shadow:0 8px 24px rgba(0,0,0,.18);border-radius:16px;color:#432b1d;backdrop-filter:blur(7px)}
+.top{position:fixed;z-index:900;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;display:flex;gap:8px;justify-content:space-between;align-items:flex-start}
+.status{padding:9px 12px;font-size:12px;min-width:0;max-width:55vw;line-height:1.25}
+.actions{display:flex;gap:5px;padding:5px;flex-wrap:wrap;justify-content:flex-end}
+button{border:1px solid rgba(95,61,32,.28);background:rgba(255,250,235,.78);border-radius:999px;padding:8px 10px;color:#432b1d;font:inherit;font-size:11px}
+button:active{transform:scale(.97)}
+.bottom{position:fixed;z-index:900;left:10px;right:10px;bottom:max(10px,env(safe-area-inset-bottom))}
+.info{padding:10px 12px;font-size:11px}
+.info b{font-size:15px}
+.coords{margin-top:5px;font-size:10px}
+.small{margin-top:5px;color:#6b4b35;line-height:1.35}
+.people{margin-top:7px;display:flex;gap:5px;flex-wrap:wrap}
+.pill{padding:4px 7px;border-radius:999px;background:rgba(255,250,235,.72);border:1px solid rgba(95,61,32,.16)}
+.me{width:22px;height:22px;border-radius:50%;background:#5d3a24;border:3px solid #f6e3b9;box-shadow:0 0 0 2px #5d3a24,0 0 24px rgba(93,58,36,.55);position:relative}
+.me:after{content:"Я";position:absolute;left:50%;top:-28px;transform:translateX(-50%);background:#f5e8ca;border:1px solid rgba(95,61,32,.28);padding:3px 7px;border-radius:999px;font-size:11px;font-weight:bold;white-space:nowrap}
+.person{position:relative;width:30px;height:32px}
+.person:before,.person:after{content:"";position:absolute;width:8px;height:14px;border-radius:60% 60% 46% 46%;background:#563625}
+.person:before{left:3px;top:10px;transform:rotate(-24deg)}
+.person:after{right:3px;top:6px;transform:rotate(20deg)}
+.nm{position:absolute;left:50%;top:-21px;transform:translateX(-50%);white-space:nowrap;background:#f5e8ca;border:1px solid rgba(95,61,32,.28);padding:3px 7px;border-radius:999px;font-size:11px}
+.modal{position:fixed;z-index:2000;inset:0;background:rgba(20,10,5,.55);display:none;place-items:center;padding:16px;backdrop-filter:blur(4px)}
+.modal.on{display:grid}
+.dialog{width:min(92vw,460px);background:linear-gradient(#efe0bd,#dfc291);border-radius:18px;padding:18px;border:1px solid rgba(95,61,32,.35);box-shadow:0 25px 80px rgba(0,0,0,.4)}
+input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,.25);background:rgba(255,250,235,.8);font:inherit;color:#432b1d}
+.row{display:flex;gap:7px;margin-top:10px}.row button{flex:1}
+@media(max-width:650px){.status{max-width:49vw}.actions button{padding:7px 8px;font-size:10px}}
+</style>
+</head>
+<body>
+<div id="map"></div><div class="vignette"></div>
+<div class="top">
+  <div class="card status" id="status">Запускаю GPS…</div>
+  <div class="card actions">
+    <button id="find">Знайти мене</button>
+    <button id="invite">Запросити</button>
+    <button id="clear">Очистити</button>
+  </div>
+</div>
+<div class="bottom">
+  <div class="card info">
+    <b>Жива карта поруч</b>
+    <div class="coords" id="coords">Моя позиція: очікую GPS…</div>
+    <div class="people" id="people"></div>
+    <div class="small">Інші люди з’являються лише після того, як самі відкриють запрошення, введуть ім’я або псевдонім і дозволять геолокацію.</div>
+  </div>
+</div>
+
+<div class="modal" id="join">
+  <div class="dialog">
+    <b>Приєднатися до живої карти</b>
+    <p class="small">Введи ім’я або псевдонім. Координати передаватимуться власнику карти, поки сторінка відкрита.</p>
+    <input id="name" maxlength="32" placeholder="Ім’я або псевдонім">
+    <div class="row"><button id="cancelJoin">Скасувати</button><button id="okJoin">Поділитися локацією</button></div>
+  </div>
+</div>
+<div class="modal" id="share">
+  <div class="dialog">
+    <b>Запросити людину</b>
+    <p class="small">Надішли це посилання. Людина з’явиться тільки після власної згоди на геолокацію.</p>
+    <input id="shareLink" readonly>
+    <div class="row"><button id="closeShare">Закрити</button><button id="copy">Копіювати</button></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),peopleEl=document.getElementById('people');
+  const joinModal=document.getElementById('join'),shareModal=document.getElementById('share'),nameInput=document.getElementById('name'),shareLink=document.getElementById('shareLink');
+  let map=null,me=null,accCircle=null,myPos=null,watchId=null,peer=null,roomId=null;
+  const conns=new Map(),members=new Map();
+  const params=new URLSearchParams(location.hash.replace(/^#/,''));
+  const joinId=params.get('join');
+
+  if(typeof L==='undefined'){
+    statusEl.textContent='Не вдалося завантажити карту. Перевір інтернет.';
+    return;
+  }
+
+  map=L.map('map',{zoomControl:false}).setView([52.2297,21.0122],15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  L.control.zoom({position:'bottomright'}).addTo(map);
+
+  function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+  function meIcon(){return L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[22,22],iconAnchor:[11,11]})}
+  function pIcon(n){return L.divIcon({className:'',html:'<div class="person"><div class="nm">'+esc(n)+'</div></div>',iconSize:[40,44],iconAnchor:[20,36]})}
+
+  function setMe(p,center){
+    const lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy||20;
+    myPos=[lat,lng];
+    coordsEl.textContent='Моя позиція: '+lat.toFixed(5)+', '+lng.toFixed(5)+' • точність ≈ '+Math.round(acc)+' м';
+    statusEl.textContent='Ти на карті • точність ≈ '+Math.round(acc)+' м';
+    if(!me) me=L.marker(myPos,{icon:meIcon(),zIndexOffset:2000}).addTo(map); else me.setLatLng(myPos);
+    if(!accCircle) accCircle=L.circle(myPos,{radius:acc,weight:1,opacity:.35,fillOpacity:.08}).addTo(map);
+    else {accCircle.setLatLng(myPos);accCircle.setRadius(acc)}
+    if(center) map.setView(myPos,18);
+    if(joinId) sendPos(p);
+  }
+
+  function gpsOnce(center){
+    if(!window.isSecureContext){statusEl.textContent='Потрібен HTTPS для GPS';return}
+    if(!navigator.geolocation){statusEl.textContent='Геолокація недоступна в Chrome';return}
+    statusEl.textContent='Шукаю твою GPS-позицію…';
+    navigator.geolocation.getCurrentPosition(
+      p=>{setMe(p,center);startWatch()},
+      e=>{
+        let m='Помилка GPS';
+        if(e.code===1)m='Chrome не має дозволу на геолокацію для цього сайту';
+        if(e.code===2)m='Телефон зараз не може визначити позицію';
+        if(e.code===3)m='GPS не встиг визначити позицію — натисни ще раз';
+        statusEl.textContent=m;coordsEl.textContent='Моя позиція: '+m;
+      },
+      {enableHighAccuracy:true,maximumAge:0,timeout:25000}
+    );
+  }
+
+  function startWatch(){
+    if(watchId!==null||!navigator.geolocation)return;
+    watchId=navigator.geolocation.watchPosition(p=>setMe(p,false),()=>{}, {enableHighAccuracy:true,maximumAge:1500,timeout:20000});
+  }
+
+  function renderPeople(){
+    peopleEl.innerHTML='';
+    if(!members.size){peopleEl.innerHTML='<span class="pill">Ніхто ще не приєднався</span>';return}
+    members.forEach(v=>{const s=document.createElement('span');s.className='pill';s.textContent=v.name;peopleEl.appendChild(s)})
+  }
+
+  function upsert(id,d){
+    if(!d||typeof d.lat!=='number'||typeof d.lng!=='number')return;
+    const n=(d.name||'Гість').slice(0,32);
+    let m=members.get(id);
+    if(!m){m={name:n,marker:L.marker([d.lat,d.lng],{icon:pIcon(n)}).addTo(map)};members.set(id,m)}
+    else{m.name=n;m.marker.setLatLng([d.lat,d.lng]);m.marker.setIcon(pIcon(n))}
+    renderPeople();
+  }
+
+  function drop(id){const m=members.get(id);if(m&&m.marker)map.removeLayer(m.marker);members.delete(id);renderPeople()}
+
+  function host(){
+    if(typeof Peer==='undefined'){statusEl.textContent='Живе з’єднання не завантажилось';return}
+    peer=new Peer();
+    peer.on('open',id=>{roomId=id;statusEl.textContent=myPos?'Карта готова • можна запрошувати':'Карта готова • очікую GPS'});
+    peer.on('connection',c=>{
+      conns.set(c.peer,c);
+      c.on('data',d=>{if(d&&d.type==='position')upsert(c.peer,d)});
+      c.on('close',()=>{conns.delete(c.peer);drop(c.peer)});
+    });
+    peer.on('error',()=>{statusEl.textContent='Помилка живого з’єднання'});
+  }
+
+  function guest(id){
+    if(typeof Peer==='undefined'){statusEl.textContent='Живе з’єднання не завантажилось';return}
+    peer=new Peer();
+    peer.on('open',()=>{
+      const c=peer.connect(id,{reliable:true});
+      c.on('open',()=>{conns.set(id,c);statusEl.textContent='Підключено • шукаю GPS';gpsOnce(true)});
+      c.on('close',()=>statusEl.textContent='З’єднання закрито');
+    });
+  }
+
+  function sendPos(p){
+    const n=(localStorage.getItem('liveMapName')||'Гість').slice(0,32);
+    const d={type:'position',name:n,lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy||null,ts:Date.now()};
+    conns.forEach(c=>{if(c.open)c.send(d)});
+  }
+
+  document.getElementById('find').onclick=()=>gpsOnce(true);
+  document.getElementById('invite').onclick=()=>{
+    if(!roomId){statusEl.textContent='Кімната ще створюється…';return}
+    shareLink.value=location.href.split('#')[0]+'#join='+encodeURIComponent(roomId);
+    shareModal.classList.add('on');
+  };
+  document.getElementById('closeShare').onclick=()=>shareModal.classList.remove('on');
+  document.getElementById('copy').onclick=async()=>{
+    try{await navigator.clipboard.writeText(shareLink.value);statusEl.textContent='Посилання скопійовано'}
+    catch(_){shareLink.select();document.execCommand('copy')}
+  };
+  document.getElementById('clear').onclick=()=>Array.from(members.keys()).forEach(drop);
+  document.getElementById('cancelJoin').onclick=()=>{joinModal.classList.remove('on');statusEl.textContent='Приєднання скасовано'};
+  document.getElementById('okJoin').onclick=()=>{
+    const n=(nameInput.value||'').trim();
+    if(!n){nameInput.focus();return}
+    localStorage.setItem('liveMapName',n.slice(0,32));
+    joinModal.classList.remove('on');
+    guest(joinId);
+  };
+
+  if(joinId){
+    nameInput.value=localStorage.getItem('liveMapName')||'';
+    joinModal.classList.add('on');
+  }else{
+    host();
+    gpsOnce(true);
+  }
+  renderPeople();
+})();
+</script>
+</body>
+</html>
