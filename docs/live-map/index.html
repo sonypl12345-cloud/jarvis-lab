@@ -25,6 +25,7 @@ body{font-family:Georgia,"Times New Roman",serif;background:#120c08;color:#432b1
 .actions{display:flex;gap:5px;padding:5px;flex-wrap:wrap;justify-content:flex-end}
 button{border:1px solid rgba(95,61,32,.28);background:rgba(255,250,235,.78);border-radius:999px;padding:8px 10px;color:#432b1d;font:inherit;font-size:11px}
 button:active{transform:scale(.97)}
+button[disabled]{opacity:.55}
 .bottom{position:fixed;z-index:900;left:10px;right:10px;bottom:max(10px,env(safe-area-inset-bottom))}
 .info{padding:10px 12px;font-size:11px}
 .info b{font-size:15px}
@@ -69,6 +70,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     <div class="card status" id="status">Запускаю GPS…</div>
     <div class="card actions">
       <button id="find">Знайти мене</button>
+      <button id="scan">Сканувати поруч</button>
       <button id="invite">Запросити</button>
       <button id="revoke">Закрити гостям</button>
       <button id="clear">Очистити</button>
@@ -78,8 +80,9 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     <div class="card info">
       <b>Жива карта поруч <span class="privateBadge">private</span></b>
       <div class="coords" id="coords">Моя позиція: очікую GPS…</div>
+      <div class="coords" id="scanInfo">Радар вимкнений</div>
       <div class="people" id="people"></div>
-      <div class="small">Люди показуються як живі точки з іменами й рухаються разом зі своєю GPS-позицією. Геопозиція не зберігається в базі карти. Гість потрапляє сюди лише після одноразового запрошення, введення імені/псевдоніма та власного дозволу на GPS.</div>
+      <div class="small">Живі учасники показуються за власним GPS. Кнопка «Сканувати поруч» робить один короткий Wi‑Fi scan через GENESIS Bridge і показує анонімні радіоточки. Їхній напрямок на карті умовний: телефон бачить силу сигналу, але не координати передавача. Друге натискання прибирає точки й нічого більше не сканує.</div>
     </div>
   </div>
 </div>
@@ -105,14 +108,21 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
 <script>
 (async function(){
   const ACCESS_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-access';
+  const SCAN_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-scan';
   const lock=document.getElementById('lock'),lockState=document.getElementById('lockState'),appShell=document.getElementById('appShell');
-  const statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),peopleEl=document.getElementById('people');
+  const statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),scanInfo=document.getElementById('scanInfo'),peopleEl=document.getElementById('people');
   const joinModal=document.getElementById('join'),shareModal=document.getElementById('share'),nameInput=document.getElementById('name'),shareLink=document.getElementById('shareLink');
-  const inviteBtn=document.getElementById('invite'),revokeBtn=document.getElementById('revoke');
+  const inviteBtn=document.getElementById('invite'),revokeBtn=document.getElementById('revoke'),scanBtn=document.getElementById('scan');
   let role=null,ownerToken=null,guestSession=null,joinId=null;
 
   async function api(action,payload={}){
     const r=await fetch(ACCESS_API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,...payload}),cache:'no-store'});
+    let data={}; try{data=await r.json()}catch(_){}
+    return {ok:r.ok && data.ok,data,status:r.status};
+  }
+
+  async function scanApi(action,payload={}){
+    const r=await fetch(SCAN_API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,owner_token:ownerToken,...payload}),cache:'no-store'});
     let data={}; try{data=await r.json()}catch(_){}
     return {ok:r.ok && data.ok,data,status:r.status};
   }
@@ -183,9 +193,14 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
 
   lock.style.display='none';
   appShell.style.display='block';
-  if(role!=='owner'){inviteBtn.style.display='none';revokeBtn.style.display='none'}
+  if(role!=='owner'){
+    inviteBtn.style.display='none';
+    revokeBtn.style.display='none';
+    scanBtn.style.display='none';
+  }
 
   let map=null,me=null,accCircle=null,myPos=null,watchId=null,peer=null,roomId=null;
+  let scanActive=false,scanBusy=false,signalMarkers=[];
   const conns=new Map(),members=new Map();
 
   if(typeof L==='undefined'){
@@ -252,6 +267,106 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
 
   function drop(id){const m=members.get(id);if(m&&m.marker)map.removeLayer(m.marker);members.delete(id);renderPeople()}
 
+  function clearSignals(){
+    signalMarkers.forEach(m=>map.removeLayer(m));
+    signalMarkers=[];
+    scanActive=false;
+    scanBusy=false;
+    scanBtn.disabled=false;
+    scanBtn.textContent='Сканувати поруч';
+    scanInfo.textContent='Радар вимкнений';
+  }
+
+  function signalBand(rssi){
+    if(rssi>=-55)return 'сильний';
+    if(rssi>=-67)return 'добрий';
+    if(rssi>=-78)return 'середній';
+    return 'слабкий';
+  }
+
+  function renderSignals(points){
+    signalMarkers.forEach(m=>map.removeLayer(m));
+    signalMarkers=[];
+    if(!myPos){
+      scanInfo.textContent='Скан завершено, але GPS-позиція «Я» ще не визначена';
+      return;
+    }
+
+    points.forEach((p,i)=>{
+      const rssi=Number(p.rssi);
+      const hex=String(p.id||'0').slice(0,8);
+      const n=parseInt(hex,16)||((i+1)*2654435761>>>0);
+      const angle=(n/0xffffffff)*Math.PI*2;
+      const weak=Math.max(0,Math.min(1,(-45-rssi)/45));
+      const visualRadius=12+weak*55;
+      const lat=myPos[0],lng=myPos[1];
+      const dLat=(Math.cos(angle)*visualRadius)/111320;
+      const dLng=(Math.sin(angle)*visualRadius)/(111320*Math.max(.2,Math.cos(lat*Math.PI/180)));
+      const pos=[lat+dLat,lng+dLng];
+      const dot=L.circleMarker(pos,{
+        radius:rssi>=-60?7:rssi>=-75?6:5,
+        weight:2,
+        opacity:.9,
+        fillOpacity:.72
+      }).addTo(map);
+      const band=Number(p.frequency)>=5925?'6 ГГц':Number(p.frequency)>=4900?'5 ГГц':'2.4 ГГц';
+      dot.bindPopup('<b>Анонімний Wi‑Fi сигнал '+(i+1)+'</b><br>Рівень: '+signalBand(rssi)+' ('+Math.round(rssi)+' dBm)<br>Діапазон: '+band+'<br><small>Точка навколо «Я» умовна: напрямок і метрична відстань не визначаються Wi‑Fi scan.</small>');
+      signalMarkers.push(dot);
+    });
+
+    scanActive=true;
+    scanBtn.disabled=false;
+    scanBtn.textContent='Вимкнути радар';
+    scanInfo.textContent='Радар: '+points.length+' анонімних Wi‑Fi сигналів • один короткий scan завершено';
+  }
+
+  async function runNearbyScan(){
+    if(scanBusy||role!=='owner')return;
+    if(scanActive){clearSignals();statusEl.textContent='Радар вимкнено';return}
+
+    scanBusy=true;
+    scanBtn.disabled=true;
+    scanBtn.textContent='Сканую…';
+    scanInfo.textContent='GENESIS робить один короткий Wi‑Fi scan…';
+    statusEl.textContent='Сканую радіосигнали поруч…';
+
+    try{
+      const start=await scanApi('start_scan');
+      if(!start.ok||!start.data.command_id)throw new Error('enqueue');
+      const id=start.data.command_id;
+
+      let finished=null;
+      for(let i=0;i<32;i++){
+        await new Promise(r=>setTimeout(r,700));
+        const s=await scanApi('scan_status',{command_id:id});
+        if(!s.ok && s.data?.status==='failed')throw new Error('failed');
+        if(s.ok&&s.data.ready){finished=s.data;break}
+      }
+      if(!finished)throw new Error('timeout');
+
+      renderSignals(Array.isArray(finished.points)?finished.points:[]);
+      statusEl.textContent=finished.count
+        ? 'Скан завершено • знайдено '+finished.count+' Wi‑Fi сигналів'
+        : 'Скан завершено • сигналів не знайдено';
+      if(!finished.count){
+        scanActive=true;
+        scanBtn.disabled=false;
+        scanBtn.textContent='Вимкнути радар';
+        scanInfo.textContent='Радар увімкнений • цього разу Wi‑Fi сигналів не знайдено';
+      }
+    }catch(e){
+      clearSignals();
+      statusEl.textContent='Не вдалося виконати скан через GENESIS Bridge';
+      scanInfo.textContent='Радар вимкнений';
+    }finally{
+      scanBusy=false;
+      if(!scanActive){
+        scanBtn.disabled=false;
+        scanBtn.textContent='Сканувати поруч';
+      }
+    }
+  }
+
   function host(){
     if(typeof Peer==='undefined'){statusEl.textContent='Живе з’єднання не завантажилось';return}
     peer=new Peer();
@@ -281,6 +396,19 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   }
 
   document.getElementById('find').onclick=()=>gpsOnce(true);
+  scanBtn.onclick=()=>{
+    if(!myPos && !scanActive){
+      if(!navigator.geolocation){statusEl.textContent='Спочатку потрібна твоя GPS-позиція';return}
+      statusEl.textContent='Спочатку визначаю точку «Я»…';
+      navigator.geolocation.getCurrentPosition(
+        p=>{setMe(p,true);startWatch();runNearbyScan()},
+        ()=>statusEl.textContent='Не вдалося визначити «Я» для радара',
+        {enableHighAccuracy:true,maximumAge:0,timeout:20000}
+      );
+      return;
+    }
+    runNearbyScan();
+  };
 
   inviteBtn.onclick=async()=>{
     if(role!=='owner')return;
@@ -318,7 +446,10 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     try{await navigator.clipboard.writeText(shareLink.value);statusEl.textContent='Приватне посилання скопійовано'}
     catch(_){shareLink.select();document.execCommand('copy')}
   };
-  document.getElementById('clear').onclick=()=>Array.from(members.keys()).forEach(drop);
+  document.getElementById('clear').onclick=()=>{
+    Array.from(members.keys()).forEach(drop);
+    clearSignals();
+  };
   document.getElementById('cancelJoin').onclick=()=>{joinModal.classList.remove('on');statusEl.textContent='Передачу геолокації не ввімкнено'};
   document.getElementById('okJoin').onclick=()=>{
     const n=(nameInput.value||'').trim();
