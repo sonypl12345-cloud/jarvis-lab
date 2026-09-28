@@ -92,6 +92,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
       <b>Жива карта поруч <span class="privateBadge">private</span></b>
       <div class="coords" id="coords">Моя позиція: очікую GPS…</div>
       <div class="coords" id="motionInfo">Рух: очікую GPS…</div>
+      <div class="coords" id="weatherInfo">Погода: очікую позицію…</div>
       <div class="coords" id="scanInfo">Радар вимкнений</div>
       <div id="radar" class="radar" aria-label="Радар анонімних радіосигналів"><div class="radarRing r1"></div><div class="radarRing r2"></div><div class="radarRing r3"></div><div class="radarAxis"></div><div class="radarMe" title="Я"></div></div>
       <div class="radarLegend" id="radarLegend"></div>
@@ -124,7 +125,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   const ACCESS_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-access';
   const SCAN_API='https://tqobahwyeqssokatjvrv.supabase.co/functions/v1/live-map-scan';
   const lock=document.getElementById('lock'),lockState=document.getElementById('lockState'),appShell=document.getElementById('appShell');
-  const statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),motionInfo=document.getElementById('motionInfo'),scanInfo=document.getElementById('scanInfo'),peopleEl=document.getElementById('people');
+  const statusEl=document.getElementById('status'),coordsEl=document.getElementById('coords'),motionInfo=document.getElementById('motionInfo'),weatherInfo=document.getElementById('weatherInfo'),scanInfo=document.getElementById('scanInfo'),peopleEl=document.getElementById('people');
   const radar=document.getElementById('radar'),radarLegend=document.getElementById('radarLegend');
   const joinModal=document.getElementById('join'),shareModal=document.getElementById('share'),nameInput=document.getElementById('name'),shareLink=document.getElementById('shareLink');
   const inviteBtn=document.getElementById('invite'),revokeBtn=document.getElementById('revoke'),scanBtn=document.getElementById('scan');
@@ -215,7 +216,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   }
 
   let map=null,me=null,accCircle=null,myPos=null,watchId=null,peer=null,roomId=null;
-  let myTrail=[],myTrailLine=null,lastMeTs=0;
+  let myTrail=[],myTrailLine=null,lastMeTs=0,lastWeatherAt=0,lastWeatherKey='';
   let scanActive=false,scanBusy=false;
   const conns=new Map(),members=new Map();
 
@@ -234,6 +235,19 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
   function distanceM(a,b){if(!a||!b)return null;const R=6371000,t=x=>x*Math.PI/180,d1=t(b[0]-a[0]),d2=t(b[1]-a[1]),q=Math.sin(d1/2)**2+Math.cos(t(a[0]))*Math.cos(t(b[0]))*Math.sin(d2/2)**2;return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q))}
   function fmtDistance(m){if(m==null||!Number.isFinite(m))return '?';return m<1000?Math.max(1,Math.round(m))+' м':(m/1000).toFixed(m<10000?1:0)+' км'}
   function fmtAge(ms){if(ms<15000)return 'зараз';if(ms<60000)return Math.round(ms/1000)+' с тому';if(ms<3600000)return Math.round(ms/60000)+' хв тому';return Math.round(ms/3600000)+' год тому'}
+  function weatherLabel(code){if(code===0)return 'ясно';if(code===1||code===2)return 'мінлива хмарність';if(code===3)return 'хмарно';if(code===45||code===48)return 'туман';if(code>=51&&code<=67)return 'дощ';if(code>=71&&code<=77)return 'сніг';if(code>=80&&code<=82)return 'зливи';if(code>=85&&code<=86)return 'снігопад';if(code>=95)return 'гроза';return 'змінна погода'}
+  async function updateWeather(lat,lng){
+    const now=Date.now(),rlat=Math.round(lat*100)/100,rlng=Math.round(lng*100)/100,key=rlat+','+rlng;
+    if(key===lastWeatherKey&&now-lastWeatherAt<600000)return;
+    lastWeatherKey=key;lastWeatherAt=now;
+    try{
+      const u='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(rlat)+'&longitude='+encodeURIComponent(rlng)+'&current=temperature_2m,weather_code,wind_speed_10m,is_day&timezone=auto';
+      const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw new Error('weather');
+      const j=await r.json(),w=j.current||{},temp=Number.isFinite(w.temperature_2m)?Math.round(w.temperature_2m)+'°C':'?',wind=Number.isFinite(w.wind_speed_10m)?Math.round(w.wind_speed_10m)+' км/год':'?';
+      document.body.classList.toggle('night',w.is_day===0);
+      weatherInfo.textContent='Погода поруч: '+temp+' • '+weatherLabel(Number(w.weather_code))+' • вітер '+wind;
+    }catch(_){weatherInfo.textContent='Погода: дані тимчасово недоступні'}
+  }
 
   function setMe(p,center){
     const lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy||20,next=[lat,lng],prev=myPos,now=Date.now();
@@ -249,6 +263,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     motionInfo.textContent='Рух: '+speedText+' • слід '+myTrail.length+'/30';
     statusEl.textContent='Ти на карті • точність ≈ '+Math.round(acc)+' м';
     if(center)map.setView(myPos,18);
+    updateWeather(lat,lng);
     if(role==='guest')sendPos(p);
     renderPeople();
   }
