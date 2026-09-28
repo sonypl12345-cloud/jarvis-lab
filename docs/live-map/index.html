@@ -97,7 +97,7 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
       <div id="radar" class="radar" aria-label="Радар анонімних радіосигналів"><div class="radarRing r1"></div><div class="radarRing r2"></div><div class="radarRing r3"></div><div class="radarAxis"></div><div class="radarMe" title="Я"></div></div>
       <div class="radarLegend" id="radarLegend"></div>
       <div class="people" id="people"></div>
-      <div class="small">Твоя GPS-точка залишає короткий слід. Підключені учасники показують відстань і час останнього сигналу. Радар тепер окремий від географічної карти: сила Wi‑Fi сигналу впливає лише на близькість до центру, а напрямок лишається умовним.</div>
+      <div class="small">Твоя GPS-точка залишає короткий слід. Підключені учасники показують відстань і час останнього сигналу. Радар окремий від географічної карти: сила Wi‑Fi сигналу впливає лише на близькість до центру, а напрямок умовний. Для погоди координати округлюються приблизно до району.</div>
     </div>
   </div>
 </div>
@@ -268,20 +268,21 @@ input{width:100%;padding:11px;border-radius:11px;border:1px solid rgba(95,61,32,
     renderPeople();
   }
 
-  function gpsOnce(center){
+  function gpsOnce(center,fallback=false){
     if(!window.isSecureContext){statusEl.textContent='Потрібен HTTPS для GPS';return}
     if(!navigator.geolocation){statusEl.textContent='Геолокація недоступна в Chrome';return}
-    statusEl.textContent='Шукаю твою GPS-позицію…';
+    statusEl.textContent=fallback?'Шукаю позицію економним способом…':'Шукаю точну GPS-позицію…';
     navigator.geolocation.getCurrentPosition(
       p=>{setMe(p,center);startWatch()},
       e=>{
+        if(!fallback&&(e.code===2||e.code===3)){gpsOnce(center,true);return}
         let m='Помилка GPS';
         if(e.code===1)m='Chrome не має дозволу на геолокацію для цього сайту';
         if(e.code===2)m='Телефон зараз не може визначити позицію';
         if(e.code===3)m='GPS не встиг визначити позицію — натисни ще раз';
         statusEl.textContent=m;coordsEl.textContent='Моя позиція: '+m;
       },
-      {enableHighAccuracy:true,maximumAge:0,timeout:25000}
+      fallback?{enableHighAccuracy:false,maximumAge:60000,timeout:15000}:{enableHighAccuracy:true,maximumAge:0,timeout:18000}
     );
   }
 
