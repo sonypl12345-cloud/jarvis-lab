@@ -9,10 +9,13 @@
 <meta name="referrer" content="no-referrer">
 <title>Приватна жива карта</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tomickigrzegorz/leaflet-rotate@0.2.4/dist/leaflet-rotate.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tomickigrzegorz/leaflet-rotate@0.2.4/dist/leaflet-rotate.umd.min.js"></script>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body,#appShell,#map{margin:0;width:100%;height:100%;overflow:hidden}
+:root{--lrc-control-bg:rgba(247,235,208,.94);--lrc-control-hover:#ead5ad;--lrc-control-size:42px}
 body{font-family:Georgia,"Times New Roman",serif;background:#120c08;color:#432b1d}
 #appShell{display:none;position:relative}
 #map{position:absolute;inset:0;background:#d7c294}
@@ -242,7 +245,17 @@ input{width:100%;padding:12px;border-radius:11px;border:1px solid rgba(95,61,32,
 
   if(typeof L==='undefined'){statusEl.textContent='Не завантажилася карта';openMenu();return}
 
-  map=L.map(mapEl,{zoomControl:false}).setView([20,0],2);
+  map=L.map(mapEl,{
+    zoomControl:false,
+    rotate:true,
+    bearing:0,
+    touchRotate:true,
+    dragRotate:false,
+    shiftKeyRotate:false,
+    rotateClockwise:true,
+    preventPageGestures:true,
+    rotateControl:{position:'bottomleft',behavior:'reset',closeOnZeroBearing:true}
+  }).setView([20,0],2);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
   L.control.zoom({position:'bottomright'}).addTo(map);
 
