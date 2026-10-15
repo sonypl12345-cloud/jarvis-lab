@@ -1,0 +1,21 @@
+name: GENESIS Neural Mesh v0.2 isolated remote canary
+on:
+  push:
+    branches:
+      - genesis/neural-mesh-v02-canary
+    paths:
+      - neural-mesh-v02/**
+      - .github/workflows/genesis-neural-mesh-v02.yml
+permissions:
+  contents: read
+jobs:
+  neural_cpu_canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout isolated experiment
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run frozen public neural model
+        run: python3 neural-mesh-v02/cloud_canary.py
