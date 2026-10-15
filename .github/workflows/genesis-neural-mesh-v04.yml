@@ -1,0 +1,21 @@
+name: GENESIS Neural Mesh v0.4 isolated shard
+on:
+  push:
+    branches:
+      - genesis/neural-mesh-v04-shards
+    paths:
+      - neural-mesh-v04/**
+      - .github/workflows/genesis-neural-mesh-v04.yml
+permissions:
+  contents: read
+jobs:
+  github-shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout frozen lab
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Infer disjoint shard 128 to 255
+        run: python3 neural-mesh-v04/github_shard.py
