@@ -1,0 +1,68 @@
+name: GENESIS Neural Mesh v0.6 concurrent E2E benchmark
+on:
+  push:
+    branches:
+      - genesis/neural-mesh-v06-concurrent
+    paths:
+      - neural-mesh-v06/**
+      - .github/workflows/genesis-neural-mesh-v06.yml
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Full 256 input control
+        run: python3 neural-mesh-v06/worker.py --start 0 --end 256 --repetitions 80000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-baseline
+          path: result.json
+          retention-days: 1
+  shards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: left
+            start: 0
+            end: 128
+          - label: right
+            start: 128
+            end: 256
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Parallel neural shard
+        run: python3 neural-mesh-v06/worker.py --start ${{ matrix.start }} --end ${{ matrix.end }} --repetitions 80000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-${{ matrix.label }}
+          path: result.json
+          retention-days: 1
+  merge:
+    needs: shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mesh-*
+          path: artifacts
+      - name: Verify both shards without waiting for baseline
+        run: python3 neural-mesh-v06/aggregate.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-verified-merge
+          path: merge_result.json
+          retention-days: 1
