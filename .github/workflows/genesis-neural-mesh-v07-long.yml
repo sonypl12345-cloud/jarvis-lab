@@ -1,0 +1,71 @@
+name: GENESIS Neural Mesh v0.7 long eight experts
+on:
+  push:
+    branches:
+      - genesis/neural-mesh-v07-eight-experts
+    paths:
+      - .github/workflows/genesis-neural-mesh-v07-long.yml
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: All eight trained experts one CPU
+        run: python3 neural-mesh-v07/worker.py --role baseline --reps 10000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-baseline
+          path: result.json
+          retention-days: 1
+  left:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Neural experts 0 through 3
+        run: python3 neural-mesh-v07/worker.py --role left --reps 10000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-left
+          path: result.json
+          retention-days: 1
+  right:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Neural experts 4 through 7
+        run: python3 neural-mesh-v07/worker.py --role right --reps 10000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-right
+          path: result.json
+          retention-days: 1
+  merge:
+    needs: [left, right]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mesh-*
+          path: artifacts
+      - name: Strict independent merge
+        run: python3 neural-mesh-v07/merge.py --reps 10000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-verified-merge
+          path: merged.json
+          retention-days: 1
