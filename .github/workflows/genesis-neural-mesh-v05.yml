@@ -1,0 +1,70 @@
+name: GENESIS Neural Mesh v0.5 two independent runners
+on:
+  push:
+    branches:
+      - genesis/neural-mesh-v05-parallel
+    paths:
+      - neural-mesh-v05/**
+      - .github/workflows/genesis-neural-mesh-v05.yml
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Full 256 input standalone baseline
+        run: python3 neural-mesh-v05/worker.py --start 0 --end 256 --repetitions 20000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-baseline
+          path: result.json
+          retention-days: 1
+  shards:
+    needs: baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: left
+            start: 0
+            end: 128
+          - label: right
+            start: 128
+            end: 256
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Independent shard
+        run: python3 neural-mesh-v05/worker.py --start ${{ matrix.start }} --end ${{ matrix.end }} --repetitions 20000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-${{ matrix.label }}
+          path: result.json
+          retention-days: 1
+  merge:
+    needs: [baseline, shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mesh-*
+          path: artifacts
+          merge-multiple: false
+      - name: Strict cross-runner prediction merge
+        run: python3 neural-mesh-v05/aggregate.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-verified-merge
+          path: merge_result.json
+          retention-days: 1
