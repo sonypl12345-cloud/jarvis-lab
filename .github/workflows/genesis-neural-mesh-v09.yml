@@ -1,0 +1,250 @@
+name: GENESIS Neural Mesh v0.9 E2E calibration
+on:
+  push:
+    branches:
+      - genesis/neural-mesh-v09-calibration
+    paths:
+      - .github/workflows/genesis-neural-mesh-v09.yml
+permissions:
+  contents: read
+jobs:
+  short_a_baseline:
+    name: short_a baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role baseline --reps 500 --output result.json
+  short_a_left:
+    name: short_a left
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role left --reps 500 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-short_a-left
+          path: result.json
+          retention-days: 1
+  short_a_right:
+    name: short_a right
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role right --reps 500 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-short_a-right
+          path: result.json
+          retention-days: 1
+  short_a_merge:
+    name: short_a merge
+    needs: [short_a_left, short_a_right]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mesh-short_a-*
+          path: artifacts
+      - name: Normalize artifact directory for strict merge
+        run: |
+          mkdir -p artifacts/mesh-left artifacts/mesh-right
+          cp artifacts/mesh-short_a-left/result.json artifacts/mesh-left/result.json
+          cp artifacts/mesh-short_a-right/result.json artifacts/mesh-right/result.json
+      - name: Verify 8 expert predictions
+        run: python3 neural-mesh-v07/merge.py --reps 500
+  short_b_baseline:
+    name: short_b baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role baseline --reps 500 --output result.json
+  short_b_left:
+    name: short_b left
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role left --reps 500 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-short_b-left
+          path: result.json
+          retention-days: 1
+  short_b_right:
+    name: short_b right
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role right --reps 500 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-short_b-right
+          path: result.json
+          retention-days: 1
+  short_b_merge:
+    name: short_b merge
+    needs: [short_b_left, short_b_right]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mesh-short_b-*
+          path: artifacts
+      - name: Normalize artifact directory for strict merge
+        run: |
+          mkdir -p artifacts/mesh-left artifacts/mesh-right
+          cp artifacts/mesh-short_b-left/result.json artifacts/mesh-left/result.json
+          cp artifacts/mesh-short_b-right/result.json artifacts/mesh-right/result.json
+      - name: Verify 8 expert predictions
+        run: python3 neural-mesh-v07/merge.py --reps 500
+  long_a_baseline:
+    name: long_a baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role baseline --reps 10000 --output result.json
+  long_a_left:
+    name: long_a left
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role left --reps 10000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-long_a-left
+          path: result.json
+          retention-days: 1
+  long_a_right:
+    name: long_a right
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role right --reps 10000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-long_a-right
+          path: result.json
+          retention-days: 1
+  long_a_merge:
+    name: long_a merge
+    needs: [long_a_left, long_a_right]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mesh-long_a-*
+          path: artifacts
+      - name: Normalize artifact directory for strict merge
+        run: |
+          mkdir -p artifacts/mesh-left artifacts/mesh-right
+          cp artifacts/mesh-long_a-left/result.json artifacts/mesh-left/result.json
+          cp artifacts/mesh-long_a-right/result.json artifacts/mesh-right/result.json
+      - name: Verify 8 expert predictions
+        run: python3 neural-mesh-v07/merge.py --reps 10000
+  long_b_baseline:
+    name: long_b baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role baseline --reps 10000 --output result.json
+  long_b_left:
+    name: long_b left
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role left --reps 10000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-long_b-left
+          path: result.json
+          retention-days: 1
+  long_b_right:
+    name: long_b right
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen eight-expert inference
+        run: python3 neural-mesh-v07/worker.py --role right --reps 10000 --output result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mesh-long_b-right
+          path: result.json
+          retention-days: 1
+  long_b_merge:
+    name: long_b merge
+    needs: [long_b_left, long_b_right]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mesh-long_b-*
+          path: artifacts
+      - name: Normalize artifact directory for strict merge
+        run: |
+          mkdir -p artifacts/mesh-left artifacts/mesh-right
+          cp artifacts/mesh-long_b-left/result.json artifacts/mesh-left/result.json
+          cp artifacts/mesh-long_b-right/result.json artifacts/mesh-right/result.json
+      - name: Verify 8 expert predictions
+        run: python3 neural-mesh-v07/merge.py --reps 10000
