@@ -5,7 +5,7 @@
   "models": [
     {
       "id": 0,
-      "weights_b64": "DlMOwKDMiz17rA+9bwFKP2f1WL4D42s9/DQHQGLqiL0eCts+MZmrvb/+gD/por29OJslQLV0ir1t4Pm/ereQPcAzCsBEwYo9Kg5EPxrn3b18lRQ/hpqKPygwAsCne5E9iVZavMSSgT8gQVs/Kp4jPDVh/b6aNPO8BE6oPOBIvrtqkky88QmeohSj+RgNm7IGfCv2lnDL1NE4i+rdXRP+lJkD5PyCg/bBfKP4or8b/JgsW/SVvlPohKpj/RoD3ADG8ZPg==",
+      "weights_b64": "DlMOwKDMiz17rA+9bwFKP2f1WL4D42s9/DQHQGLqiL0eCts+MZmrvb/+gD/por29OJslQLV0ir1t4Pm/ereQPcAzCsBEwYo9Kg5EPxrn3b18lRQ/hpqKPygwAsCne5E9iVZavMSSgT8gQVs/Kp4jPDVh/b6aNPO8BE6oPOBIvrtqkky88QmeveohSj+RgNm7IGfCv2lnDL1NE4i+rdXRP+lJkD5PyCg/bBfKP4or8b/JgsW/SVvlPohKpj/RoD3ADG8ZPg==",
       "oracle_output_sha256": "cc92c3cdd6cca3987863ce1c1512d145d3acc288b79787eaa7f9060f49cabf03",
       "packed_sha256": "674a35040841dc2b7bb7e227327a78ffa4a3c9a03fd16d0fd24cebb5eadf1577",
       "npz_sha256": "f156378799b6a67ae8e6c754f00e302785fcc130fa914d4c830747655aaa7e00",
