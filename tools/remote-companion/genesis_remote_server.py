@@ -1,4 +1,8 @@
-import ctypes, io, json, socket, threading
+import ctypes
+import io
+import json
+import socket
+import threading
 from ctypes import wintypes
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +18,7 @@ def pairing_token():
         return ""
 
 user32=ctypes.windll.user32
+
 MOUSEEVENTF_LEFTDOWN=0x0002
 MOUSEEVENTF_LEFTUP=0x0004
 MOUSEEVENTF_RIGHTDOWN=0x0008
@@ -21,25 +26,55 @@ MOUSEEVENTF_RIGHTUP=0x0010
 MOUSEEVENTF_WHEEL=0x0800
 KEYEVENTF_KEYUP=0x0002
 KEYEVENTF_UNICODE=0x0004
+INPUT_MOUSE=0
 INPUT_KEYBOARD=1
+INPUT_HARDWARE=2
 
 VK={"BACKSPACE":0x08,"TAB":0x09,"ENTER":0x0D,"ESC":0x1B,"LEFT":0x25,"UP":0x26,"RIGHT":0x27,"DOWN":0x28}
 
+ULONG_PTR=ctypes.c_size_t
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_=[
+        ("dx",wintypes.LONG),("dy",wintypes.LONG),
+        ("mouseData",wintypes.DWORD),("dwFlags",wintypes.DWORD),
+        ("time",wintypes.DWORD),("dwExtraInfo",ULONG_PTR),
+    ]
+
 class KEYBDINPUT(ctypes.Structure):
-    _fields_=[("wVk",ctypes.c_ushort),("wScan",ctypes.c_ushort),("dwFlags",ctypes.c_ulong),("time",ctypes.c_ulong),("dwExtraInfo",ctypes.POINTER(ctypes.c_ulong))]
+    _fields_=[
+        ("wVk",wintypes.WORD),("wScan",wintypes.WORD),
+        ("dwFlags",wintypes.DWORD),("time",wintypes.DWORD),
+        ("dwExtraInfo",ULONG_PTR),
+    ]
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_=[("uMsg",wintypes.DWORD),("wParamL",wintypes.WORD),("wParamH",wintypes.WORD)]
+
 class INPUT_UNION(ctypes.Union):
-    _fields_=[("ki",KEYBDINPUT)]
+    _fields_=[("mi",MOUSEINPUT),("ki",KEYBDINPUT),("hi",HARDWAREINPUT)]
+
 class INPUT(ctypes.Structure):
-    _fields_=[("type",ctypes.c_ulong),("union",INPUT_UNION)]
+    _anonymous_=("union",)
+    _fields_=[("type",wintypes.DWORD),("union",INPUT_UNION)]
+
+user32.SendInput.argtypes=(wintypes.UINT,ctypes.POINTER(INPUT),ctypes.c_int)
+user32.SendInput.restype=wintypes.UINT
 
 def send_unicode(text):
     raw=text.encode("utf-16-le","surrogatepass")
+    sent_events=0
     for i in range(0,len(raw),2):
         code=raw[i] | (raw[i+1]<<8)
         for flags in (KEYEVENTF_UNICODE,KEYEVENTF_UNICODE|KEYEVENTF_KEYUP):
-            inp=INPUT(type=INPUT_KEYBOARD)
-            inp.union.ki=KEYBDINPUT(0,code,flags,0,None)
-            user32.SendInput(1,ctypes.byref(inp),ctypes.sizeof(inp))
+            inp=INPUT()
+            inp.type=INPUT_KEYBOARD
+            inp.ki=KEYBDINPUT(0,code,flags,0,0)
+            n=user32.SendInput(1,ctypes.byref(inp),ctypes.sizeof(INPUT))
+            if n!=1:
+                raise OSError(ctypes.get_last_error(),"SendInput failed")
+            sent_events+=1
+    return sent_events
 
 def send_key(name):
     vk=VK.get((name or "").upper())
@@ -86,6 +121,7 @@ def camera_jpeg():
             _camera=cv2.VideoCapture(0,cv2.CAP_DSHOW)
             _camera.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
             _camera.set(cv2.CAP_PROP_FRAME_HEIGHT,720)
+            _camera.set(cv2.CAP_PROP_BUFFERSIZE,1)
         ok,frame=_camera.read()
         if not ok or frame is None:
             raise RuntimeError("camera_read_failed")
@@ -94,13 +130,30 @@ def camera_jpeg():
             raise RuntimeError("camera_encode_failed")
         return enc.tobytes()
 
+def camera_off():
+    global _camera
+    with _cam_lock:
+        if _camera is not None:
+            try:
+                _camera.release()
+            finally:
+                _camera=None
+    return True
+
+def camera_active():
+    with _cam_lock:
+        return bool(_camera is not None and _camera.isOpened())
+
 class Handler(BaseHTTPRequestHandler):
-    server_version="GENESISRemote/0.2"
+    server_version="GENESISRemote/0.3"
+
     def log_message(self,*args):
         return
+
     def _auth(self):
         tok=pairing_token()
         return bool(tok) and self.headers.get("X-Genesis-Token","")==tok
+
     def _json(self,obj,status=200):
         body=json.dumps(obj,separators=(",",":")).encode()
         self.send_response(status)
@@ -109,6 +162,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control","no-store")
         self.end_headers()
         self.wfile.write(body)
+
     def _jpeg(self,body):
         self.send_response(200)
         self.send_header("Content-Type","image/jpeg")
@@ -116,12 +170,22 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control","no-store")
         self.end_headers()
         self.wfile.write(body)
+
     def do_GET(self):
         if not self._auth():
             return self._json({"ok":False,"error":"unauthorized"},401)
         try:
             if self.path.startswith("/status"):
-                return self._json({"ok":True,"host":socket.gethostname(),"screen":True,"camera":True,"control":True})
+                return self._json({
+                    "ok":True,
+                    "host":socket.gethostname(),
+                    "screen":True,
+                    "camera":True,
+                    "camera_active":camera_active(),
+                    "control":True,
+                    "keyboard":"sendinput_unicode_v2",
+                    "server":"0.3",
+                })
             if self.path.startswith("/screen.jpg"):
                 return self._jpeg(screen_jpeg())
             if self.path.startswith("/camera.jpg"):
@@ -129,6 +193,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok":False,"error":"not_found"},404)
         except Exception as e:
             return self._json({"ok":False,"error":type(e).__name__},503)
+
     def do_POST(self):
         if not self._auth():
             return self._json({"ok":False,"error":"unauthorized"},401)
@@ -141,23 +206,31 @@ class Handler(BaseHTTPRequestHandler):
             a=int(data.get("a",0) or 0)
             b=int(data.get("b",0) or 0)
             text=str(data.get("text","") or "")
+
             if action=="mouse_move":
                 mouse_move(max(-500,min(500,a)),max(-500,min(500,b)))
-            elif action=="left_click":
+                return self._json({"ok":True})
+            if action=="left_click":
                 mouse_click(False)
-            elif action=="right_click":
+                return self._json({"ok":True})
+            if action=="right_click":
                 mouse_click(True)
-            elif action=="scroll":
+                return self._json({"ok":True})
+            if action=="scroll":
                 mouse_scroll(max(-12,min(12,a)))
-            elif action=="type_text":
-                send_unicode(text[:2048])
-            elif action=="key":
+                return self._json({"ok":True})
+            if action=="type_text":
+                events=send_unicode(text[:2048])
+                return self._json({"ok":True,"input_events":events})
+            if action=="key":
                 if not send_key(text):
                     return self._json({"ok":False,"error":"key_denied"},400)
-            else:
-                return self._json({"ok":False,"error":"action_denied"},400)
-            return self._json({"ok":True})
+                return self._json({"ok":True})
+            if action=="camera_off":
+                camera_off()
+                return self._json({"ok":True,"camera_active":False})
+            return self._json({"ok":False,"error":"action_denied"},400)
         except Exception as e:
-            return self._json({"ok":False,"error":type(e).__name__},400)
+            return self._json({"ok":False,"error":type(e).__name__,"message":str(e)[:160]},400)
 
 ThreadingHTTPServer((HOST,PORT),Handler).serve_forever(poll_interval=0.2)
