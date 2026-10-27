@@ -107,3 +107,65 @@ Vision: road / crowd / obstruction / weather / visibility
 
 Production Live Map and Supabase stay unchanged until this selector and at least
 one public camera adapter pass isolated tests.
+
+
+## GDDKiA adapter discovery — 2026-10-27
+
+The current public-map JavaScript declares:
+
+\`\`\`text
+rootDataUrl = https://kpd.gddkia.gov.pl/amp/
+camerapointsUrl = api/waypoints/camerapoints.json
+\`\`\`
+
+Therefore the camera-point transport URL used by the map is:
+
+\`\`\`text
+https://kpd.gddkia.gov.pl/amp/api/waypoints/camerapoints.json
+\`\`\`
+
+The JavaScript consumes point fields including:
+
+- \`id\`, \`latitude\`, \`longitude\`, \`name\`;
+- \`road_number\`, \`mileage\`;
+- \`cameras[].images[].path\`;
+- \`cameras[].images[].updated_date\`;
+- \`meteo_stations\` for camera points that also expose weather data.
+
+A direct anonymous fetch observed during this LAB returned HTTP 401. This is
+treated as an access boundary, not an invitation to work around it.
+
+\`src/gddkia_camera_adapter.py\` therefore separates **transport** from
+**parsing**. It can parse the real KPD payload shape, but a live fetch must be
+provided by a legitimate official public-map browser session if the endpoint
+requires one.
+
+Current LAB tests:
+
+\`\`\`text
+camera-ahead selector: 5 tests
+GDDKiA adapter:       6 tests
+\`\`\`
+
+No production Live Map, Supabase function, Android bridge, or credential store
+was changed by this work.
+
+### Next integration seam
+
+\`\`\`text
+official public GDDKiA map session
+        ↓
+sanitized camera-point payload
+        ↓
+gddkia_camera_adapter.parse_camerapoints
+        ↓
+camera_ahead.select_cameras_ahead
+        ↓
+freshest selected public image
+        ↓
+vision summary + source + timestamp
+\`\`\`
+
+The session handoff should export only the public camera metadata needed by the
+selector; it should not export browser cookies, credentials, or unrelated
+session state.
