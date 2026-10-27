@@ -1,19 +1,25 @@
 {
   "organ": "GENESIS QUIESCENT ECO",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "status": "LAB_READY_NOT_INSTALLED",
   "platform": "Windows 10/11",
   "branch": "genesis-quiescent-eco-v01",
   "entrypoint": "genesis_quiescent_eco.py",
-  "entrypoint_blob_sha": "ded4f7544e34edf450e7e6b07f1a49327ab4f654",
-  "default_install": "python genesis_quiescent_eco.py install --monitor-minutes 2",
+  "entrypoint_blob_sha": "f295703ac4d4b0a8397f066cd418a6df5bc606d1",
+  "default_install": "python genesis_quiescent_eco.py install",
   "changes_ac_only": {
-    "display_timeout_seconds": 120,
+    "display_timeout": "PRESERVE_EXISTING_WINDOWS_VALUE",
     "standby_timeout_seconds": 0,
     "hibernate_timeout_seconds": 0
   },
+  "standard_display_behavior": {
+    "idle_timeout": "Windows-managed",
+    "media_display_requests": "respected",
+    "manual_force_off": "available only through explicit enter command"
+  },
   "unchanged_by_default": [
     "battery/DC power policy",
+    "display timeout",
     "lid-close action",
     "global hibernation capability",
     "GENESIS Remote companion",
@@ -23,14 +29,13 @@
   "rollback": "python genesis_quiescent_eco.py rollback",
   "verification": [
     "backup exists before mutation",
-    "AC display timeout is 120 seconds",
+    "AC display timeout equals pre-install value",
     "AC standby timeout is 0",
     "AC hibernate timeout is 0",
     "battery/DC values unchanged",
+    "powercfg /requests is visible in status",
     "remote companion listens on localhost:8765",
     "existing watchdog remains registered",
-    "screen can be turned off without entering S3",
-    "remote control remains reachable with display off",
     "rollback restores exact previous AC values"
   ]
 }
