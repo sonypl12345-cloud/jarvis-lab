@@ -6,7 +6,7 @@ from pathlib import Path
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "GENESISNomad" / "quiescent_eco"
 BACKUP_FILE = APP_DIR / "power_backup.json"
 INSTALLED_SCRIPT = APP_DIR / "genesis_quiescent_eco.py"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 SETTINGS = {
     "display": ("SUB_VIDEO", "VIDEOIDLE"),
     "sleep": ("SUB_SLEEP", "STANDBYIDLE"),
@@ -109,6 +109,46 @@ def rollback():
     return {"schema":"GENESIS_QUIESCENT_ECO_ROLLBACK_V02","verdict":"PASS" if ok else "PARTIAL",
             "results":{k:{"rc":v["rc"],"err":v["err"][-500:]} for k,v in results.items()},"post":snapshot()}
 
+def pause_playing_media():
+    try:
+        import asyncio
+        from winrt.windows.media.control import (
+            GlobalSystemMediaTransportControlsSessionManager as MediaManager,
+            GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
+        )
+    except Exception as e:
+        return {"verdict":"UNAVAILABLE","error":type(e).__name__+":"+str(e)[:200],"sessions_seen":0,"paused":[]}
+
+    async def _run():
+        out={"verdict":"PASS","sessions_seen":0,"playing_seen":0,"paused":[],"failed":[]}
+        try:
+            mgr=await MediaManager.request_async()
+            sessions=list(mgr.get_sessions())
+            out["sessions_seen"]=len(sessions)
+            for session in sessions:
+                try:
+                    info=session.get_playback_info()
+                    source=session.source_app_user_model_id
+                    if info.playback_status==PlaybackStatus.PLAYING:
+                        out["playing_seen"]+=1
+                        if bool(info.controls.is_pause_enabled):
+                            ok=bool(await session.try_pause_async())
+                            (out["paused"] if ok else out["failed"]).append(source)
+                        else:
+                            out["failed"].append(source+":pause_disabled")
+                except Exception as e:
+                    out["failed"].append(type(e).__name__+":"+str(e)[:120])
+            if out["failed"] and not out["paused"]:
+                out["verdict"]="PARTIAL"
+            return out
+        except Exception as e:
+            return {"verdict":"FAIL","error":type(e).__name__+":"+str(e)[:240],"sessions_seen":0,"paused":[]}
+
+    try:
+        return asyncio.run(_run())
+    except Exception as e:
+        return {"verdict":"FAIL","error":type(e).__name__+":"+str(e)[:240],"sessions_seen":0,"paused":[]}
+
 def screen_off():
     try:
         rc=ctypes.windll.user32.SendMessageW(0xFFFF,0x0112,0xF170,2)
@@ -117,10 +157,13 @@ def screen_off():
         return {"ok":False,"error":type(e).__name__+":"+str(e)}
 
 def enter_quiescent():
+    media=pause_playing_media()
+    time.sleep(0.25)
     s=screen_off()
-    return {"schema":"GENESIS_QUIESCENT_ECO_ENTER_V02","verdict":"PASS" if s.get("ok") else "PARTIAL",
-            "screen_off":s,"companion":companion_status(),
-            "note":"Manual only: forces display off now. Normal automatic display-off remains managed by Windows idle/media power requests."}
+    verdict="PASS" if s.get("ok") and media.get("verdict") in ("PASS","UNAVAILABLE") else "PARTIAL"
+    return {"schema":"GENESIS_QUIESCENT_ECO_ENTER_V03","verdict":verdict,
+            "media_pause":media,"screen_off":s,"companion":companion_status(),
+            "note":"Pauses only sessions that are actually PLAYING, then turns the display off. It never auto-resumes media."}
 
 def status():
     return {"schema":"GENESIS_QUIESCENT_ECO_STATUS_V02","version":VERSION,
