@@ -6,7 +6,7 @@ from pathlib import Path
 APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "GENESISNomad" / "quiescent_eco"
 BACKUP_FILE = APP_DIR / "power_backup.json"
 INSTALLED_SCRIPT = APP_DIR / "genesis_quiescent_eco.py"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 SETTINGS = {
     "display": ("SUB_VIDEO", "VIDEOIDLE"),
     "sleep": ("SUB_SLEEP", "STANDBYIDLE"),
@@ -35,9 +35,14 @@ def active_scheme():
     m=re.search(r"([0-9a-fA-F]{8}-[0-9a-fA-F-]{27,})",r["out"])
     return m.group(1) if m else None
 
+def power_requests():
+    r=powercfg("/requests")
+    return {"rc":r["rc"],"out":r["out"][-6000:],"err":r["err"][-1000:]}
+
 def snapshot():
     return {"version":VERSION,"ts":time.time(),"active_scheme":active_scheme(),
-            "settings":{n:read_setting(*s) for n,s in SETTINGS.items()}}
+            "settings":{n:read_setting(*s) for n,s in SETTINGS.items()},
+            "power_requests":power_requests()}
 
 def save_backup(force=False):
     APP_DIR.mkdir(parents=True,exist_ok=True)
@@ -66,24 +71,34 @@ def companion_status():
     except Exception: pass
     return {"port_8765_listening":port,"watchdog_registered":bool(watchdog)}
 
-def apply_profile(monitor_minutes=2,lid_do_nothing=False):
-    save_backup(False)
+def apply_profile(monitor_minutes=None,lid_do_nothing=False):
+    backup=save_backup(False)
     results={}
-    results["display"]=set_ac(*SETTINGS["display"],max(1,monitor_minutes)*60)
+    if monitor_minutes is not None:
+        results["display"]=set_ac(*SETTINGS["display"],max(1,monitor_minutes)*60)
     results["sleep"]=set_ac(*SETTINGS["sleep"],0)
     results["hibernate"]=set_ac(*SETTINGS["hibernate"],0)
     if lid_do_nothing: results["lid"]=set_ac(*SETTINGS["lid"],0)
     results["activate"]=activate()
     ok=all(x["rc"]==0 for x in results.values())
-    return {"schema":"GENESIS_QUIESCENT_ECO_APPLY_V01","verdict":"PASS" if ok else "PARTIAL",
-            "monitor_minutes_ac":max(1,monitor_minutes),"sleep_ac":"NEVER","hibernate_ac":"NEVER",
-            "battery_settings_changed":False,"lid_changed":lid_do_nothing,
-            "results":{k:{"rc":v["rc"],"err":v["err"][-500:]} for k,v in results.items()},
-            "backup_file":str(BACKUP_FILE),"companion":companion_status(),"post":snapshot()}
+    return {
+        "schema":"GENESIS_QUIESCENT_ECO_APPLY_V02",
+        "verdict":"PASS" if ok else "PARTIAL",
+        "display_policy":"PRESERVE_WINDOWS_STANDARD" if monitor_minutes is None else f"SET_{max(1,monitor_minutes)}_MINUTES",
+        "display_ac_before":backup.get("settings",{}).get("display",{}).get("ac"),
+        "sleep_ac":"NEVER",
+        "hibernate_ac":"NEVER",
+        "battery_settings_changed":False,
+        "lid_changed":lid_do_nothing,
+        "results":{k:{"rc":v["rc"],"err":v["err"][-500:]} for k,v in results.items()},
+        "backup_file":str(BACKUP_FILE),
+        "companion":companion_status(),
+        "post":snapshot()
+    }
 
 def rollback():
     if not BACKUP_FILE.exists():
-        return {"schema":"GENESIS_QUIESCENT_ECO_ROLLBACK_V01","verdict":"BLOCKED","reason":"backup_missing"}
+        return {"schema":"GENESIS_QUIESCENT_ECO_ROLLBACK_V02","verdict":"BLOCKED","reason":"backup_missing"}
     b=json.loads(BACKUP_FILE.read_text(encoding="utf-8"))
     results={}
     for name,(sub,setting) in SETTINGS.items():
@@ -91,26 +106,27 @@ def rollback():
         if ac is not None: results[name]=set_ac(sub,setting,int(ac))
     results["activate"]=activate()
     ok=all(x["rc"]==0 for x in results.values())
-    return {"schema":"GENESIS_QUIESCENT_ECO_ROLLBACK_V01","verdict":"PASS" if ok else "PARTIAL",
+    return {"schema":"GENESIS_QUIESCENT_ECO_ROLLBACK_V02","verdict":"PASS" if ok else "PARTIAL",
             "results":{k:{"rc":v["rc"],"err":v["err"][-500:]} for k,v in results.items()},"post":snapshot()}
 
 def screen_off():
     try:
         rc=ctypes.windll.user32.SendMessageW(0xFFFF,0x0112,0xF170,2)
         return {"ok":True,"return":int(rc)}
-    except Exception as e: return {"ok":False,"error":type(e).__name__+":"+str(e)}
+    except Exception as e:
+        return {"ok":False,"error":type(e).__name__+":"+str(e)}
 
 def enter_quiescent():
     s=screen_off()
-    return {"schema":"GENESIS_QUIESCENT_ECO_ENTER_V01","verdict":"PASS" if s.get("ok") else "PARTIAL",
+    return {"schema":"GENESIS_QUIESCENT_ECO_ENTER_V02","verdict":"PASS" if s.get("ok") else "PARTIAL",
             "screen_off":s,"companion":companion_status(),
-            "note":"Windows stays awake; display is off. Input may wake the display."}
+            "note":"Manual only: forces display off now. Normal automatic display-off remains managed by Windows idle/media power requests."}
 
 def status():
-    return {"schema":"GENESIS_QUIESCENT_ECO_STATUS_V01","version":VERSION,
+    return {"schema":"GENESIS_QUIESCENT_ECO_STATUS_V02","version":VERSION,
             "power":snapshot(),"backup_exists":BACKUP_FILE.exists(),"companion":companion_status()}
 
-def install(monitor_minutes=2,lid_do_nothing=False):
+def install(monitor_minutes=None,lid_do_nothing=False):
     APP_DIR.mkdir(parents=True,exist_ok=True)
     source=Path(__file__).resolve()
     if source != INSTALLED_SCRIPT.resolve(): shutil.copy2(source,INSTALLED_SCRIPT)
@@ -122,14 +138,14 @@ def install(monitor_minutes=2,lid_do_nothing=False):
     }
     for name,content in helpers.items(): (APP_DIR/name).write_text(content,encoding="utf-8")
     applied=apply_profile(monitor_minutes,lid_do_nothing)
-    return {"schema":"GENESIS_QUIESCENT_ECO_INSTALL_V01","verdict":applied["verdict"],
+    return {"schema":"GENESIS_QUIESCENT_ECO_INSTALL_V02","verdict":applied["verdict"],
             "installed_script":str(INSTALLED_SCRIPT),"helpers":[str(APP_DIR/x) for x in helpers],"apply":applied}
 
 def main():
     ap=argparse.ArgumentParser(description="GENESIS QUIESCENT ECO for Windows")
     sub=ap.add_subparsers(dest="cmd",required=True)
-    a=sub.add_parser("apply"); a.add_argument("--monitor-minutes",type=int,default=2); a.add_argument("--lid-do-nothing",action="store_true")
-    i=sub.add_parser("install"); i.add_argument("--monitor-minutes",type=int,default=2); i.add_argument("--lid-do-nothing",action="store_true")
+    a=sub.add_parser("apply"); a.add_argument("--monitor-minutes",type=int,default=None); a.add_argument("--lid-do-nothing",action="store_true")
+    i=sub.add_parser("install"); i.add_argument("--monitor-minutes",type=int,default=None); i.add_argument("--lid-do-nothing",action="store_true")
     sub.add_parser("enter"); sub.add_parser("status"); sub.add_parser("rollback")
     args=ap.parse_args()
     if args.cmd=="apply": out=apply_profile(args.monitor_minutes,args.lid_do_nothing)
