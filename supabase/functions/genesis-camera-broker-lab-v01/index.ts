@@ -1,0 +1,242 @@
+Deno.serve(async(req)=>{
+  const STARY={
+    id:"webcamera-stary-rynek",
+    name:"Stary Rynek",
+    operator:"webcamera.pl",
+    public_page:"https://poznan-stary-rynek.webcamera.pl/",
+    region:"Poznań",
+    purpose:"public_city_view",
+    lat:52.40763155230196,
+    lon:16.932474616679546,
+    orientation:"rotating_or_unknown",
+    hls_url:"https://hoktastream2.webcamera.pl/poznan_cam_a2ec1b/poznan_cam_a2ec1b.stream/playlist.m3u8",
+    latest_mp4:"https://imageserver.webcamera.pl/rec/poznan-stary-rynek/latest.mp4",
+    preview_url:"https://imageserver.webcamera.pl/miniaturki/poznan_cam_a2ec1b.jpg"
+  };
+
+  const SOURCES=[
+    STARY,
+    {id:"poznan-mtp-live",name:"MTP",operator:"Urząd Miasta Poznania / Video Poznań",public_page:"https://video.poznan.pl/wideo/livestream/kamerka-mtp/",region:"Poznań",purpose:"public_city_view",config_url:"https://video.poznan.pl/player/build/db/index.php?video_id=602&autoplay=false&muted=true"},
+    {id:"panorama-umww-s",name:"UMWW Południe",operator:"Panorama Poznania Online",public_page:"https://156.15.119.185-rev.hti.pl/",region:"Poznań",purpose:"public_panorama",preview_url:"https://156.15.119.185-rev.hti.pl/custom/img/s1.jpg",hls_url:"https://panorama.poznan.pl/hls/nimble1.m3u8"},
+    {id:"panorama-umww-n",name:"UMWW Północ",operator:"Panorama Poznania Online",public_page:"https://156.15.119.185-rev.hti.pl/",region:"Poznań",purpose:"public_panorama",preview_url:"https://156.15.119.185-rev.hti.pl/custom/img/s2.jpg",hls_url:"https://panorama.poznan.pl/hls/nimble2.m3u8"},
+    {id:"panorama-umww-e",name:"UMWW Wschód",operator:"Panorama Poznania Online",public_page:"https://156.15.119.185-rev.hti.pl/",region:"Poznań",purpose:"public_panorama",preview_url:"https://156.15.119.185-rev.hti.pl/custom/img/s3.jpg",hls_url:"https://panorama.poznan.pl/hls/nimble3.m3u8"},
+    {id:"panorama-umww-w",name:"UMWW Zachód",operator:"Panorama Poznania Online",public_page:"https://156.15.119.185-rev.hti.pl/",region:"Poznań",purpose:"public_panorama",preview_url:"https://156.15.119.185-rev.hti.pl/custom/img/s4.jpg",hls_url:"https://panorama.poznan.pl/hls/nimble4.m3u8"}
+  ];
+
+  const out=(body,status=200)=>new Response(JSON.stringify(body),{
+    status,
+    headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store"}
+  });
+
+  const fetchT=async(url,init={},ms=7000)=>{
+    const c=new AbortController();
+    const timer=setTimeout(()=>c.abort(),ms);
+    try{
+      return await fetch(url,{
+        ...init,
+        signal:c.signal,
+        redirect:"follow",
+        headers:{
+          ...(init.headers||{}),
+          "user-agent":"GENESIS-Camera-Broker-LAB/0.5 (+read-only-public-sources)"
+        }
+      });
+    } finally { clearTimeout(timer); }
+  };
+
+  const absolute=(base,rel)=>new URL(rel,base).toString();
+
+  const parseMaster=(text,base)=>{
+    const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    const variants=[];
+    for(let i=0;i<lines.length;i++){
+      if(lines[i].startsWith("#EXT-X-STREAM-INF:") && lines[i+1] && !lines[i+1].startsWith("#")){
+        variants.push(absolute(base,lines[i+1]));
+      }
+    }
+    return variants;
+  };
+
+  const parseMedia=(text,base)=>{
+    const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    const seqLine=lines.find(x=>x.startsWith("#EXT-X-MEDIA-SEQUENCE:"));
+    const sequence=seqLine?Number(seqLine.split(":")[1]):null;
+    const segments=lines.filter(x=>!x.startsWith("#") && /\.ts(?:\?|$)/i.test(x)).map(x=>absolute(base,x));
+    return {sequence,segments,latest_segment:segments.length?segments[segments.length-1]:null};
+  };
+
+  async function staryStatus(waitForAdvance=false){
+    const checked_at=new Date().toISOString();
+    try{
+      const masterRes=await fetchT(STARY.hls_url,{headers:{"accept":"application/vnd.apple.mpegurl,application/x-mpegurl,*/*"}});
+      const master=await masterRes.text();
+      if(!masterRes.ok || !master.includes("#EXTM3U")) throw new Error("master_manifest_unavailable");
+      const variants=parseMaster(master,STARY.hls_url);
+      const mediaUrl=variants[0]||STARY.hls_url;
+
+      const readMedia=async()=>{
+        const r=await fetchT(mediaUrl,{headers:{"accept":"application/vnd.apple.mpegurl,application/x-mpegurl,*/*"}});
+        const t=await r.text();
+        if(!r.ok || !t.includes("#EXTM3U")) throw new Error("media_manifest_unavailable");
+        return parseMedia(t,mediaUrl);
+      };
+
+      const first=await readMedia();
+      let second=null;
+      if(waitForAdvance){
+        await new Promise(resolve=>setTimeout(resolve,7000));
+        second=await readMedia();
+      }
+
+      let mp4Probe=null;
+      try{
+        const h=await fetchT(STARY.latest_mp4,{method:"HEAD"},5000);
+        mp4Probe={
+          ok:h.ok,
+          http_status:h.status,
+          content_type:h.headers.get("content-type"),
+          content_length:h.headers.get("content-length"),
+          last_modified:h.headers.get("last-modified"),
+          etag:h.headers.get("etag")
+        };
+      }catch(e){
+        mp4Probe={ok:false,error:e instanceof Error?e.message:String(e)};
+      }
+
+      const advanced=second
+        ? (
+            (Number.isFinite(first.sequence) && Number.isFinite(second.sequence) && second.sequence>first.sequence) ||
+            (first.latest_segment && second.latest_segment && first.latest_segment!==second.latest_segment)
+          )
+        : null;
+
+      return {
+        ok:true,
+        source_id:STARY.id,
+        name:STARY.name,
+        checked_at,
+        master_http_status:masterRes.status,
+        resolution_hint:"1920x1080",
+        media_playlist:mediaUrl,
+        first,
+        second,
+        advanced,
+        live:waitForAdvance?Boolean(advanced):Boolean(first.latest_segment),
+        latest_mp4:{url:STARY.latest_mp4,...mp4Probe},
+        vision_input:{
+          type:"video_clip",
+          url:STARY.latest_mp4,
+          live_hls:STARY.hls_url,
+          note:"Decode one frame from latest.mp4 or HLS for visual interpretation."
+        },
+        provenance:{
+          public_page:STARY.public_page,
+          operator:STARY.operator,
+          region:STARY.region,
+          lat:STARY.lat,
+          lon:STARY.lon,
+          orientation:STARY.orientation
+        },
+        boundary:"Public live camera only; no identity tracking, no private feeds, no recording."
+      };
+    }catch(e){
+      return {ok:false,source_id:STARY.id,checked_at,error:e instanceof Error?e.message:String(e)};
+    }
+  }
+
+  const parseEnv=raw=>{const a=raw.indexOf("{"),b=raw.lastIndexOf("}");if(a<0||b<=a)throw new Error("player_config_json_not_found");return JSON.parse(raw.slice(a,b+1))};
+
+  const resolveMtp=async s=>{
+    if(!s.config_url)return[];
+    const r=await fetchT(s.config_url);
+    if(!r.ok)throw new Error("config_http_"+r.status);
+    const cfg=parseEnv((await r.text()).slice(0,128000));
+    return Array.isArray(cfg?.sources?.hls)?cfg.sources.hls.map(x=>String(x?.url||"")).filter(Boolean):[];
+  };
+
+  const preview=async s=>{
+    if(!s.preview_url)return null;
+    try{
+      const r=await fetchT(s.preview_url,{headers:{"accept":"image/jpeg,image/*;q=0.8,*/*;q=0.1"}},5000);
+      const bytes=new Uint8Array(await r.arrayBuffer());
+      const jpeg=bytes.length>=2&&bytes[0]===255&&bytes[1]===216;
+      return {
+        ok:r.ok&&jpeg,http_status:r.status,content_type:r.headers.get("content-type")||"",
+        bytes:bytes.length,jpeg,last_modified:r.headers.get("last-modified"),
+        etag:r.headers.get("etag"),image_url:s.preview_url
+      };
+    }catch(e){return{ok:false,error:e instanceof Error?e.message:String(e),image_url:s.preview_url}}
+  };
+
+  const probe=async s=>{
+    if(s.id===STARY.id){
+      const live=await staryStatus(false);
+      const p=await preview(s);
+      return {
+        source_id:s.id,name:s.name,operator:s.operator,region:s.region,
+        ok:Boolean(live.ok&&live.live),preview:p,stream:live,checked_at:new Date().toISOString()
+      };
+    }
+    const p=await preview(s);
+    let stream=null;
+    try{
+      const urls=s.hls_url?[s.hls_url]:await resolveMtp(s);
+      if(urls.length){
+        const r=await fetchT(urls[0],{},5000);
+        const txt=(await r.text()).slice(0,64000);
+        stream={ok:r.ok&&txt.includes("#EXTM3U"),http_status:r.status,is_hls_manifest:txt.includes("#EXTM3U"),hls_url:urls[0]};
+      }
+    }catch(e){stream={ok:false,error:e instanceof Error?e.message:String(e)}}
+    return {source_id:s.id,name:s.name,operator:s.operator,region:s.region,ok:Boolean(p?.ok||stream?.ok),preview:p,stream,checked_at:new Date().toISOString()};
+  };
+
+  if(req.method==="GET")return out({
+    ok:true,
+    schema:"GENESIS_CAMERA_BROKER_LAB_V05",
+    mode:"read_only_cloud_only",
+    source_count:SOURCES.length,
+    sources:SOURCES.map(({config_url,hls_url,latest_mp4,...s})=>s),
+    stary_rynek:{
+      live_transport:"HLS",
+      vision_asset:"latest.mp4",
+      coordinates:{lat:STARY.lat,lon:STARY.lon},
+      orientation:STARY.orientation
+    },
+    boundary:"Public camera sources only; no private feeds, credentials, cookies, identity tracking, recording, or user-device dependency."
+  });
+
+  if(req.method!=="POST")return out({ok:false,error:"method_not_allowed"},405);
+  let b={};try{b=await req.json()}catch{return out({ok:false,error:"invalid_json"},400)}
+
+  if(b.action==="stary_rynek_live_status") return out(await staryStatus(false));
+  if(b.action==="stary_rynek_verify_live") return out(await staryStatus(true));
+
+  if(b.action==="probe_source"){
+    const s=SOURCES.find(x=>x.id===b.source_id);
+    if(!s)return out({ok:false,error:"unknown_source"},404);
+    return out(await probe(s));
+  }
+
+  if(b.action==="probe_all"){
+    const r=await Promise.all(SOURCES.map(probe));
+    return out({ok:true,schema:"GENESIS_CAMERA_BROKER_PROBE_V05",checked_at:new Date().toISOString(),total:r.length,live:r.filter(x=>x.ok).length,results:r});
+  }
+
+  if(b.action==="vision_input"){
+    if(b.source_id!==STARY.id)return out({ok:false,error:"vision_input_not_ready_for_source"},404);
+    const live=await staryStatus(false);
+    if(!live.ok||!live.live)return out({ok:false,error:"live_source_unavailable",detail:live},503);
+    return out({
+      ok:true,
+      schema:"GENESIS_CAMERA_VISION_INPUT_V01",
+      source_id:STARY.id,
+      checked_at:live.checked_at,
+      input:live.vision_input,
+      provenance:live.provenance,
+      freshness:{media_sequence:live.first?.sequence,latest_segment:live.first?.latest_segment},
+      boundary:live.boundary
+    });
+  }
+
+  return out({ok:false,error:"unsupported_action",allowed:["probe_source","probe_all","stary_rynek_live_status","stary_rynek_verify_live","vision_input"]},400);
+});
