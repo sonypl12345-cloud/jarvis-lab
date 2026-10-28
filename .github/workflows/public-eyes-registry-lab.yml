@@ -6,8 +6,11 @@ on:
       - lab/camera-ahead-v01
     paths:
       - tools/webcamera_registry_capture.py
+      - tools/argos_public_index_capture.py
       - .github/workflows/public-eyes-registry-lab.yml
   workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * *"
 
 permissions:
   contents: write
@@ -23,26 +26,36 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Refresh sanitized metadata-only registry
-        run: python tools/webcamera_registry_capture.py
+      - name: Refresh sanitized metadata-only registries
+        run: |
+          python tools/webcamera_registry_capture.py
+          python tools/argos_public_index_capture.py
       - name: Validate no image payloads are stored
         run: |
           python - <<'PY'
           import json, pathlib
-          p=pathlib.Path("data/public_eyes/webcamera_registry.json")
-          j=json.loads(p.read_text())
-          assert j["policy"]["metadata_only"] is True
-          assert j["policy"]["raw_images_stored"] is False
-          assert len(j["eyes"]) >= 1
-          assert all("preview_url" in x and "lat" in x and "lon" in x for x in j["eyes"])
-          assert "data:image" not in p.read_text().lower()
-          print("registry eyes:",len(j["eyes"]))
+          paths=[
+              pathlib.Path("data/public_eyes/webcamera_registry.json"),
+              pathlib.Path("data/public_eyes/argos_central_europe_registry.json"),
+          ]
+          total=0
+          for p in paths:
+              j=json.loads(p.read_text())
+              assert j["policy"]["metadata_only"] is True
+              assert j["policy"]["raw_images_stored"] is False
+              assert len(j["eyes"]) >= 1
+              assert all("preview_url" in x and "lat" in x and "lon" in x for x in j["eyes"])
+              text=p.read_text().lower()
+              assert "data:image" not in text
+              total += len(j["eyes"])
+              print(p.name,"eyes:",len(j["eyes"]))
+          print("metadata eye records:",total)
           PY
       - name: Commit registry metadata if changed
         run: |
           git config user.name "GENESIS LAB"
           git config user.email "actions@users.noreply.github.com"
-          git add data/public_eyes/webcamera_registry.json
+          git add data/public_eyes/webcamera_registry.json data/public_eyes/argos_central_europe_registry.json
           if git diff --cached --quiet; then
             echo "Registry unchanged"
           else
