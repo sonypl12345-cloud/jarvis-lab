@@ -169,3 +169,26 @@ vision summary + source + timestamp
 The session handoff should export only the public camera metadata needed by the
 selector; it should not export browser cookies, credentials, or unrelated
 session state.
+
+
+## Headless owner context (canonical)
+
+Owner location is **not** supplied by the Live Map UI and is **not** exposed through the public Camera Broker.
+
+Canonical agent path:
+
+1. `genesis_internal.owner_location_start_v01(force)` enqueues one bounded `workspace_python` command on `oneplus10t-b40`.
+2. The device runs `~/GenesisProjects/InteropLab/genesis_location_snapshot_v01.py`.
+3. The script requests one `termux-location` GPS snapshot and persists nothing locally.
+4. `genesis_internal.owner_location_finish_v01(command_id)` validates the verified command receipt, freshness, coordinates, accuracy, speed, and GPS bearing.
+5. Only one row, `live_map_presence.session_hash='owner-current'`, is upserted. No route history is stored.
+6. `genesis_internal.owner_location_get_v01()` treats the row as fresh for 90 seconds.
+7. Public `anon` and `authenticated` roles have no EXECUTE privilege on these functions.
+8. The public Camera Broker remains public-camera-data only; it contains no owner-location endpoints.
+
+Direction policy:
+- when moving at >= 0.8 m/s, use GPS bearing;
+- when slower, preserve only a recently verified heading (<=5 min) or report direction as unknown;
+- do not infer a heading from the current Termux Rotation Vector output until its representation is independently calibrated.
+
+This keeps the control path agent-first and UI-independent: no browser page or visual map is required for JARVIS to locate the owner.
