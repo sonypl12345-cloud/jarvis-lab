@@ -318,6 +318,7 @@ window.L=(function(){
   let role=null,ownerToken=null,guestSession=null;
   let map=null,me=null,accCircle=null,myPos=null,watchId=null,lastGuestPos=null;
   let myFootprints=[],lastMeTs=0,lastWeatherAt=0,lastWeatherKey='',toastTimer=null,autoFitDone=false;
+  let lastOwnerSentAt=0,lastOwnerSentPos=null,ownerPresenceInflight=false;
   let meetingMarker=null,meetingPoint=null,meetingMode=false;
   const members=new Map();
 
@@ -471,27 +472,55 @@ window.L=(function(){
     if(!r.ok&&r.status===401)toast('Гостьовий доступ завершився');
   }
 
+  async function sendOwnerPresence(lat,lng,accuracy,speed,heading){
+    if(role!=='owner'||!ownerToken||ownerPresenceInflight)return;
+    const now=Date.now(),next=[lat,lng];
+    const movedSinceSend=lastOwnerSentPos?distanceM(lastOwnerSentPos,next):Infinity;
+    const moving=Number.isFinite(speed)&&speed>=0.8;
+    const minInterval=moving?10000:60000;
+    if(lastOwnerSentAt&&now-lastOwnerSentAt<minInterval&&movedSinceSend<10)return;
+    ownerPresenceInflight=true;
+    try{
+      const r=await presence('owner_update',{
+        owner_token:ownerToken,
+        lat,lng,
+        accuracy:Number.isFinite(accuracy)?accuracy:null,
+        speed_mps:Number.isFinite(speed)?speed:null,
+        heading_deg:Number.isFinite(heading)?heading:null
+      });
+      if(r.ok){
+        lastOwnerSentAt=now;
+        lastOwnerSentPos=next;
+      }
+    }catch(_){}
+    finally{ownerPresenceInflight=false}
+  }
+
   function setMe(p,center){
     const lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy||20,next=[lat,lng],prev=myPos,now=Date.now();
     const moved=prev?distanceM(prev,next):null;
     let speed=Number(p.coords.speed);
     if(!Number.isFinite(speed)&&moved!=null&&lastMeTs)speed=moved/Math.max(1,(now-lastMeTs)/1000);
+    let heading=Number(p.coords.heading);
+    if(!Number.isFinite(heading)&&prev&&moved!=null&&moved>=4)heading=bearingDeg(prev,next);
     myPos=next;lastMeTs=now;
     if(role==='guest')lastGuestPos=p;
 
     coordsEl.textContent='Позиція: '+lat.toFixed(5)+', '+lng.toFixed(5)+' • ±'+Math.round(acc)+' м';
-    motionInfo.textContent='Рух: '+(Number.isFinite(speed)?(speed*3.6).toFixed(speed*3.6<10?1:0)+' км/год':'—')+' • слід '+myTrail.length+'/30';
     statusEl.textContent=role==='owner'?'Карта активна':'Локація передається';
 
     if(!me)me=L.marker(myPos,{icon:meIcon(),zIndexOffset:2000}).addTo(map);else me.setLatLng(myPos);
     if(!accCircle)accCircle=L.circle(myPos,{radius:acc,weight:1,opacity:.30,fillOpacity:.06}).addTo(map);else{accCircle.setLatLng(myPos);accCircle.setRadius(acc)}
 
     if(prev&&moved!=null&&moved>=4)addFootprint(myFootprints,prev,true);
-    motionInfo.textContent='Рух: '+(Number.isFinite(speed)?(speed*3.6).toFixed(speed*3.6<10?1:0)+' км/год':'—')+' • живі сліди '+myFootprints.length;
+    motionInfo.textContent='Рух: '+(Number.isFinite(speed)?(speed*3.6).toFixed(speed*3.6<10?1:0)+' км/год':'—')+
+      (Number.isFinite(heading)?' • курс '+Math.round(heading)+'° '+bearingArrow(heading):'')+
+      ' • живі сліди '+myFootprints.length;
 
     if(center)map.setView(myPos,18);
     updateWeather(lat,lng);
     if(role==='guest')sendPresence();
+    else if(role==='owner')sendOwnerPresence(lat,lng,acc,speed,heading);
     renderPeople();
   }
 
