@@ -1,0 +1,51 @@
+name: Public Eyes Registry LAB
+
+on:
+  push:
+    branches:
+      - lab/camera-ahead-v01
+    paths:
+      - tools/webcamera_registry_capture.py
+      - .github/workflows/public-eyes-registry-lab.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: lab/camera-ahead-v01
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refresh sanitized metadata-only registry
+        run: python tools/webcamera_registry_capture.py
+      - name: Validate no image payloads are stored
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p=pathlib.Path("data/public_eyes/webcamera_registry.json")
+          j=json.loads(p.read_text())
+          assert j["policy"]["metadata_only"] is True
+          assert j["policy"]["raw_images_stored"] is False
+          assert len(j["eyes"]) >= 1
+          assert all("preview_url" in x and "lat" in x and "lon" in x for x in j["eyes"])
+          assert "data:image" not in p.read_text().lower()
+          print("registry eyes:",len(j["eyes"]))
+          PY
+      - name: Commit registry metadata if changed
+        run: |
+          git config user.name "GENESIS LAB"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/public_eyes/webcamera_registry.json
+          if git diff --cached --quiet; then
+            echo "Registry unchanged"
+          else
+            git commit -m "LAB: refresh metadata-only public eyes registry"
+            git push origin HEAD:lab/camera-ahead-v01
+          fi
