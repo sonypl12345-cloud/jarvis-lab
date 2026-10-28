@@ -24,6 +24,7 @@ class PublicVisualSource:
     provider: str
     scene_kind: str
     expected_refresh_s: Optional[int] = None
+    max_stale_s: Optional[int] = None
     public: bool = True
 
 
@@ -42,6 +43,7 @@ SOURCES = (
         provider="WebCamera.pl",
         scene_kind="square",
         expected_refresh_s=300,
+        max_stale_s=1800,
     ),
     PublicVisualSource(
         source_id="video-poznan:mtp-602",
@@ -67,6 +69,7 @@ SOURCES = (
         media_kind="snapshot",
         provider="LookCam",
         scene_kind="road",
+        max_stale_s=1800,
     ),
 )
 
