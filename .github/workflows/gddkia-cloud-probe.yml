@@ -1,0 +1,39 @@
+name: GDDKiA Cloud Camera Probe
+
+on:
+  push:
+    branches:
+      - lab/camera-ahead-v01
+    paths:
+      - tools/gddkia_cloud_capture.py
+      - .github/workflows/gddkia-cloud-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned Playwright
+        run: |
+          python -m pip install --disable-pip-version-check playwright==1.55.0
+          python -m playwright install --with-deps chromium
+      - name: Capture sanitized public GDDKiA camera layer
+        run: python tools/gddkia_cloud_capture.py
+      - name: Upload sanitized registry probe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gddkia-camera-registry-probe
+          path: |
+            data/gddkia_registry_probe.json
+            data/gddkia_probe_failure.png
+          if-no-files-found: warn
+          retention-days: 1
