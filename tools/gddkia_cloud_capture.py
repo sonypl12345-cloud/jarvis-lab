@@ -13,7 +13,7 @@ OUT = Path("data/gddkia_registry_probe.json")
 EXTRACT = r"""
 () => {
   const text=(v,n=240)=>String(v??'').trim().slice(0,n);
-  const app=window.mapApp;
+  const app=(typeof mapApp!=='undefined'&&mapApp)?mapApp:window.mapApp;
   const layer=app&&typeof app.getLayer==='function'?app.getLayer('CamerapointsLayer'):null;
   if(!layer||typeof layer.getFeatures!=='function'){
     return {ok:false,stage:!app?'mapApp':'CamerapointsLayer',url:location.href,title:document.title};
