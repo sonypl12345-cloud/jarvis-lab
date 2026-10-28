@@ -147,6 +147,19 @@ def main():
         page.on("response",on_response)
         page.goto(URL,wait_until="domcontentloaded",timeout=90000)
 
+        # Same BrowserContext request channel: shares the legitimate public-page cookie jar,
+        # but is not subject to page CORS. It does not export cookies/tokens.
+        try:
+            rr=context.request.get(CAMERA_URL,headers={"Accept":"application/json","Referer":URL},timeout=15000)
+            diagnostics["context_request"]={"status":rr.status,"url":rr.url}
+            if rr.status==200:
+                raw=rr.json()
+                pts=unwrap_points(raw)
+                if pts is not None:
+                    captured.append({"transport":"browser_context_request","url":CAMERA_URL,"points":sanitize(pts)})
+        except Exception as exc:
+            diagnostics["context_request"]={"error":str(exc)[:800]}
+
         # Consent is not needed for public data, but the site may defer optional scripts until the dialog is closed.
         for label in ("Akceptuję","Zamknij"):
             try:
@@ -158,7 +171,32 @@ def main():
             except Exception:
                 pass
 
-        # Try to activate a camera-labelled UI control if the layer is opt-in.
+        # The official map exposes layer toggles in a vertical rail on the right.
+        # In the current public UI, the camera-points control is the movie/camera
+        # pictogram around y≈185 in a 1280x900 viewport. Click the official control
+        # and let the page make its own public camera request.
+        try:
+            hit=page.evaluate("""() => {
+              const x=1245,y=185;
+              const e=document.elementFromPoint(x,y);
+              const chain=[];
+              let n=e;
+              for(let i=0;n&&i<6;i++,n=n.parentElement){
+                const r=n.getBoundingClientRect();
+                chain.push({tag:n.tagName,id:n.id||'',class:String(n.className||'').slice(0,250),
+                  title:n.getAttribute?.('title')||'',aria:n.getAttribute?.('aria-label')||'',
+                  x:r.x,y:r.y,w:r.width,h:r.height,
+                  img:n.tagName==='IMG'?(n.getAttribute('src')||''):''});
+              }
+              return chain;
+            }""")
+            diagnostics["right_rail_camera_hit"]=hit
+            page.mouse.click(1245,185)
+            time.sleep(6)
+        except Exception as exc:
+            diagnostics["right_rail_camera_click_error"]=str(exc)[:800]
+
+        # Fallback: try a camera-labelled UI control if present.
         for frame in page.frames:
             try:
                 loc=frame.locator("[title*='kamer' i], [aria-label*='kamer' i], [data-title*='kamer' i]")
