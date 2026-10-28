@@ -48,7 +48,7 @@ Deno.serve(async(req)=>{
         redirect:"follow",
         headers:{
           ...(init.headers||{}),
-          "user-agent":"GENESIS-Camera-Broker-LAB/0.7 (+ephemeral-read-only-public-sources)"
+          "user-agent":"GENESIS-Camera-Broker-LAB/0.13 (+ephemeral-public-cameras;owner-context-private)"
         }
       });
     } finally { clearTimeout(timer); }
@@ -151,48 +151,6 @@ Deno.serve(async(req)=>{
       };
     }catch(e){
       return {ok:false,source_id:STARY.id,checked_at,error:e instanceof Error?e.message:String(e)};
-    }
-  }
-
-  async function ownerContext(){
-    const base=Deno.env.get("SUPABASE_URL");
-    const service=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if(!base||!service)return {ok:false,error:"owner_context_backend_unavailable"};
-    try{
-      const url=base+"/rest/v1/live_map_presence?session_hash=eq.owner-current&select=lat,lng,accuracy,speed_mps,heading_deg,source,last_seen&limit=1";
-      const r=await fetchT(url,{
-        headers:{
-          "apikey":service,
-          "authorization":"Bearer "+service,
-          "accept":"application/json"
-        }
-      },5000);
-      if(!r.ok)return {ok:false,error:"owner_context_read_failed",http_status:r.status};
-      const rows=await r.json();
-      const row=Array.isArray(rows)&&rows.length?rows[0]:null;
-      if(!row)return {ok:false,error:"owner_location_unavailable"};
-      const ts=Date.parse(row.last_seen);
-      const ageS=Number.isFinite(ts)?Math.max(0,(Date.now()-ts)/1000):null;
-      const fresh=ageS!==null&&ageS<=OWNER_CONTEXT_TTL_S;
-      return {
-        ok:fresh,
-        fresh,
-        error:fresh?null:"owner_location_stale",
-        ttl_s:OWNER_CONTEXT_TTL_S,
-        age_s:ageS,
-        location:{
-          lat:Number(row.lat),
-          lon:Number(row.lng),
-          accuracy_m:row.accuracy==null?null:Number(row.accuracy),
-          speed_mps:row.speed_mps==null?null:Number(row.speed_mps),
-          heading_deg:row.heading_deg==null?null:Number(row.heading_deg),
-          source:row.source||null,
-          last_seen:row.last_seen
-        },
-        persistence:"singleton_current_state_only"
-      };
-    }catch(e){
-      return {ok:false,error:e instanceof Error?e.message:String(e)};
     }
   }
 
@@ -349,7 +307,7 @@ Deno.serve(async(req)=>{
 
   if(req.method==="GET")return out({
     ok:true,
-    schema:"GENESIS_CAMERA_BROKER_LAB_V08",
+    schema:"GENESIS_CAMERA_BROKER_LAB_V13",
     mode:"read_only_cloud_only",
     source_count:SOURCES.length,
     sources:SOURCES.map(({config_url,hls_url,latest_mp4,...s})=>s),
@@ -366,8 +324,6 @@ Deno.serve(async(req)=>{
 
   if(req.method!=="POST")return out({ok:false,error:"method_not_allowed"},405);
   let b={};try{b=await req.json()}catch{return out({ok:false,error:"invalid_json"},400)}
-
-  if(b.action==="owner_context") return out(await ownerContext());
 
   if(["persist_frame","save_frame","archive_frame","upload_frame"].includes(String(b.action||""))){
     return out({ok:false,error:"persistence_forbidden_by_policy",policy:PERSISTENCE_POLICY},403);
@@ -405,5 +361,5 @@ Deno.serve(async(req)=>{
     });
   }
 
-  return out({ok:false,error:"unsupported_action",allowed:["owner_context","probe_source","probe_all","stary_rynek_live_status","stary_rynek_verify_live","stary_rynek_frame_meta","stary_rynek_frame","vision_input"]},400);
+  return out({ok:false,error:"unsupported_action",allowed:["probe_source","probe_all","stary_rynek_live_status","stary_rynek_verify_live","stary_rynek_frame_meta","stary_rynek_frame","vision_input"]},400);
 });
