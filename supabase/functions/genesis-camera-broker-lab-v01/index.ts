@@ -11,7 +11,8 @@ Deno.serve(async(req)=>{
     orientation:"rotating_or_unknown",
     hls_url:"https://hoktastream2.webcamera.pl/poznan_cam_a2ec1b/poznan_cam_a2ec1b.stream/playlist.m3u8",
     latest_mp4:"https://imageserver.webcamera.pl/rec/poznan-stary-rynek/latest.mp4",
-    preview_url:"https://imageserver.webcamera.pl/miniaturki/poznan_cam_a2ec1b.jpg"
+    preview_url:"https://imageserver.webcamera.pl/miniaturki/poznan_cam_a2ec1b.jpg",
+    frame_ttl_s:180
   };
 
   const SOURCES=[
@@ -38,7 +39,7 @@ Deno.serve(async(req)=>{
         redirect:"follow",
         headers:{
           ...(init.headers||{}),
-          "user-agent":"GENESIS-Camera-Broker-LAB/0.5 (+read-only-public-sources)"
+          "user-agent":"GENESIS-Camera-Broker-LAB/0.6 (+read-only-public-sources)"
         }
       });
     } finally { clearTimeout(timer); }
@@ -168,6 +169,96 @@ Deno.serve(async(req)=>{
     }catch(e){return{ok:false,error:e instanceof Error?e.message:String(e),image_url:s.preview_url}}
   };
 
+  const hex=bytes=>Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,"0")).join("");
+
+  async function staryFrameMeta(){
+    const checkedAt=new Date();
+    const live=await staryStatus(false);
+    if(!live.ok||!live.live){
+      return {ok:false,error:"live_source_unavailable",live};
+    }
+    try{
+      const r=await fetchT(STARY.preview_url,{
+        headers:{
+          "accept":"image/jpeg,image/*;q=0.8,*/*;q=0.1",
+          "cache-control":"no-cache"
+        }
+      },5000);
+      const bytes=new Uint8Array(await r.arrayBuffer());
+      const jpeg=r.ok&&bytes.length>=2&&bytes[0]===255&&bytes[1]===216;
+      const lm=r.headers.get("last-modified");
+      const capturedAt=lm?new Date(lm):null;
+      const ageS=capturedAt&&Number.isFinite(capturedAt.getTime())
+        ? Math.max(0,(checkedAt.getTime()-capturedAt.getTime())/1000)
+        : null;
+      const digest=await crypto.subtle.digest("SHA-256",bytes);
+      const fresh=jpeg&&ageS!==null&&ageS<=STARY.frame_ttl_s;
+      return {
+        ok:fresh,
+        source_id:STARY.id,
+        checked_at:checkedAt.toISOString(),
+        captured_at:capturedAt&&Number.isFinite(capturedAt.getTime())?capturedAt.toISOString():null,
+        age_s:ageS,
+        ttl_s:STARY.frame_ttl_s,
+        fresh,
+        jpeg,
+        bytes:bytes.length,
+        sha256:hex(digest),
+        content_type:r.headers.get("content-type"),
+        etag:r.headers.get("etag"),
+        image_url:STARY.preview_url,
+        hls_sequence:live.first?.sequence,
+        latest_segment:live.first?.latest_segment,
+        provenance:live.provenance,
+        boundary:live.boundary
+      };
+    }catch(e){
+      return {ok:false,source_id:STARY.id,checked_at:checkedAt.toISOString(),error:e instanceof Error?e.message:String(e)};
+    }
+  }
+
+  async function staryFrameResponse(){
+    const live=await staryStatus(false);
+    if(!live.ok||!live.live)return out({ok:false,error:"live_source_unavailable",detail:live},503);
+    try{
+      const r=await fetchT(STARY.preview_url,{
+        headers:{
+          "accept":"image/jpeg,image/*;q=0.8,*/*;q=0.1",
+          "cache-control":"no-cache"
+        }
+      },5000);
+      const bytes=new Uint8Array(await r.arrayBuffer());
+      const jpeg=r.ok&&bytes.length>=2&&bytes[0]===255&&bytes[1]===216;
+      const lm=r.headers.get("last-modified");
+      const capturedAt=lm?new Date(lm):null;
+      const now=new Date();
+      const ageS=capturedAt&&Number.isFinite(capturedAt.getTime())
+        ? Math.max(0,(now.getTime()-capturedAt.getTime())/1000)
+        : null;
+      if(!jpeg||ageS===null||ageS>STARY.frame_ttl_s){
+        return out({
+          ok:false,error:"frame_stale_or_invalid",jpeg,age_s:ageS,ttl_s:STARY.frame_ttl_s,
+          captured_at:capturedAt&&Number.isFinite(capturedAt.getTime())?capturedAt.toISOString():null,
+          hls_sequence:live.first?.sequence
+        },503);
+      }
+      return new Response(bytes,{
+        status:200,
+        headers:{
+          "content-type":"image/jpeg",
+          "cache-control":"no-store",
+          "x-genesis-source-id":STARY.id,
+          "x-genesis-captured-at":capturedAt.toISOString(),
+          "x-genesis-frame-age-s":String(Math.round(ageS)),
+          "x-genesis-frame-ttl-s":String(STARY.frame_ttl_s),
+          "x-genesis-hls-sequence":String(live.first?.sequence??"")
+        }
+      });
+    }catch(e){
+      return out({ok:false,error:"frame_fetch_failed",detail:e instanceof Error?e.message:String(e)},502);
+    }
+  }
+
   const probe=async s=>{
     if(s.id===STARY.id){
       const live=await staryStatus(false);
@@ -192,13 +283,14 @@ Deno.serve(async(req)=>{
 
   if(req.method==="GET")return out({
     ok:true,
-    schema:"GENESIS_CAMERA_BROKER_LAB_V05",
+    schema:"GENESIS_CAMERA_BROKER_LAB_V06",
     mode:"read_only_cloud_only",
     source_count:SOURCES.length,
     sources:SOURCES.map(({config_url,hls_url,latest_mp4,...s})=>s),
     stary_rynek:{
       live_transport:"HLS",
-      vision_asset:"latest.mp4",
+      vision_asset:"fresh_jpeg_with_hls_proof",
+      frame_ttl_s:STARY.frame_ttl_s,
       coordinates:{lat:STARY.lat,lon:STARY.lon},
       orientation:STARY.orientation
     },
@@ -209,6 +301,8 @@ Deno.serve(async(req)=>{
   let b={};try{b=await req.json()}catch{return out({ok:false,error:"invalid_json"},400)}
 
   if(b.action==="stary_rynek_live_status") return out(await staryStatus(false));
+  if(b.action==="stary_rynek_frame_meta") return out(await staryFrameMeta());
+  if(b.action==="stary_rynek_frame") return await staryFrameResponse();
   if(b.action==="stary_rynek_verify_live") return out(await staryStatus(true));
 
   if(b.action==="probe_source"){
@@ -231,12 +325,12 @@ Deno.serve(async(req)=>{
       schema:"GENESIS_CAMERA_VISION_INPUT_V01",
       source_id:STARY.id,
       checked_at:live.checked_at,
-      input:live.vision_input,
+      input:{type:"fresh_jpeg",action:"stary_rynek_frame",fallback:live.vision_input},
       provenance:live.provenance,
       freshness:{media_sequence:live.first?.sequence,latest_segment:live.first?.latest_segment},
       boundary:live.boundary
     });
   }
 
-  return out({ok:false,error:"unsupported_action",allowed:["probe_source","probe_all","stary_rynek_live_status","stary_rynek_verify_live","vision_input"]},400);
+  return out({ok:false,error:"unsupported_action",allowed:["probe_source","probe_all","stary_rynek_live_status","stary_rynek_verify_live","stary_rynek_frame_meta","stary_rynek_frame","vision_input"]},400);
 });
