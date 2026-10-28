@@ -318,7 +318,6 @@ window.L=(function(){
   let role=null,ownerToken=null,guestSession=null;
   let map=null,me=null,accCircle=null,myPos=null,watchId=null,lastGuestPos=null;
   let myFootprints=[],lastMeTs=0,lastWeatherAt=0,lastWeatherKey='',toastTimer=null,autoFitDone=false;
-  let lastOwnerSentAt=0,lastOwnerSentPos=null,ownerPresenceInflight=false;
   let meetingMarker=null,meetingPoint=null,meetingMode=false;
   const members=new Map();
 
@@ -472,30 +471,6 @@ window.L=(function(){
     if(!r.ok&&r.status===401)toast('Гостьовий доступ завершився');
   }
 
-  async function sendOwnerPresence(lat,lng,accuracy,speed,heading){
-    if(role!=='owner'||!ownerToken||ownerPresenceInflight)return;
-    const now=Date.now(),next=[lat,lng];
-    const movedSinceSend=lastOwnerSentPos?distanceM(lastOwnerSentPos,next):Infinity;
-    const moving=Number.isFinite(speed)&&speed>=0.8;
-    const minInterval=moving?10000:60000;
-    if(lastOwnerSentAt&&now-lastOwnerSentAt<minInterval&&movedSinceSend<10)return;
-    ownerPresenceInflight=true;
-    try{
-      const r=await presence('owner_update',{
-        owner_token:ownerToken,
-        lat,lng,
-        accuracy:Number.isFinite(accuracy)?accuracy:null,
-        speed_mps:Number.isFinite(speed)?speed:null,
-        heading_deg:Number.isFinite(heading)?heading:null
-      });
-      if(r.ok){
-        lastOwnerSentAt=now;
-        lastOwnerSentPos=next;
-      }
-    }catch(_){}
-    finally{ownerPresenceInflight=false}
-  }
-
   function setMe(p,center){
     const lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy||20,next=[lat,lng],prev=myPos,now=Date.now();
     const moved=prev?distanceM(prev,next):null;
@@ -520,7 +495,6 @@ window.L=(function(){
     if(center)map.setView(myPos,18);
     updateWeather(lat,lng);
     if(role==='guest')sendPresence();
-    else if(role==='owner')sendOwnerPresence(lat,lng,acc,speed,heading);
     renderPeople();
   }
 
