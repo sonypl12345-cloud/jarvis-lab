@@ -130,6 +130,34 @@ def main():
         )
         page=context.new_page()
 
+        # Inspect only public static configuration/code to discover the camera-layer
+        # activation contract. Do not read/export cookies, storage or auth headers.
+        try:
+            jsr=context.request.get("https://kpd.gddkia.gov.pl/map/kpd-map.js",timeout=20000)
+            js=jsr.text() if jsr.ok else ""
+            needles=["CamerapointsLayer","camerapointsUrl","camerapoints","camera-legend","cameraLayer","CameraLayer"]
+            snippets={}
+            low=js.lower()
+            for needle in needles:
+                start=0; vals=[]
+                target=needle.lower()
+                while len(vals)<8:
+                    idx=low.find(target,start)
+                    if idx<0: break
+                    vals.append(js[max(0,idx-900):min(len(js),idx+1800)])
+                    start=idx+len(target)
+                if vals: snippets[needle]=vals
+            diagnostics["public_js"]={"status":jsr.status,"length":len(js),"snippets":snippets}
+        except Exception as exc:
+            diagnostics["public_js"]={"error":str(exc)[:800]}
+
+        try:
+            ar=context.request.get("https://kpd.gddkia.gov.pl/map/assetsConfig.json",timeout=15000)
+            txt=ar.text() if ar.ok else ""
+            diagnostics["assets_config"]={"status":ar.status,"text":txt[:40000]}
+        except Exception as exc:
+            diagnostics["assets_config"]={"error":str(exc)[:800]}
+
         def on_response(resp):
             u=resp.url
             low=u.lower()
@@ -170,6 +198,17 @@ def main():
                     break
             except Exception:
                 pass
+
+        try:
+            diagnostics["right_rail_controls"]=page.evaluate("""() => [...document.querySelectorAll('.layers-filter button, .layers-filter [role=button]')].map((e,i)=>{
+              const r=e.getBoundingClientRect();
+              const img=e.querySelector('img');
+              return {i,tag:e.tagName,class:String(e.className||''),title:e.getAttribute('title')||'',
+                aria:e.getAttribute('aria-label')||'',x:r.x,y:r.y,w:r.width,h:r.height,
+                img:img?(img.getAttribute('src')||''):''};
+            })""")
+        except Exception as exc:
+            diagnostics["right_rail_controls_error"]=str(exc)[:800]
 
         # The official map exposes layer toggles in a vertical rail on the right.
         # In the current public UI, the camera-points control is the movie/camera
