@@ -1,4 +1,12 @@
 Deno.serve(async(req)=>{
+  const PERSISTENCE_POLICY={
+    raw_images:"forbidden",
+    video_segments:"forbidden",
+    storage_uploads:"forbidden",
+    database_blobs:"forbidden",
+    mode:"ephemeral_on_demand_only",
+    max_frame_bytes:2000000
+  };
   const STARY={
     id:"webcamera-stary-rynek",
     name:"Stary Rynek",
@@ -39,7 +47,7 @@ Deno.serve(async(req)=>{
         redirect:"follow",
         headers:{
           ...(init.headers||{}),
-          "user-agent":"GENESIS-Camera-Broker-LAB/0.6 (+read-only-public-sources)"
+          "user-agent":"GENESIS-Camera-Broker-LAB/0.7 (+ephemeral-read-only-public-sources)"
         }
       });
     } finally { clearTimeout(timer); }
@@ -184,7 +192,14 @@ Deno.serve(async(req)=>{
           "cache-control":"no-cache"
         }
       },5000);
+      const declaredSize=Number(r.headers.get("content-length")||"0");
+      if(declaredSize>PERSISTENCE_POLICY.max_frame_bytes){
+        return {ok:false,source_id:STARY.id,checked_at:checkedAt.toISOString(),error:"frame_too_large",declared_bytes:declaredSize,max_bytes:PERSISTENCE_POLICY.max_frame_bytes};
+      }
       const bytes=new Uint8Array(await r.arrayBuffer());
+      if(bytes.length>PERSISTENCE_POLICY.max_frame_bytes){
+        return {ok:false,source_id:STARY.id,checked_at:checkedAt.toISOString(),error:"frame_too_large",bytes:bytes.length,max_bytes:PERSISTENCE_POLICY.max_frame_bytes};
+      }
       const jpeg=r.ok&&bytes.length>=2&&bytes[0]===255&&bytes[1]===216;
       const lm=r.headers.get("last-modified");
       const capturedAt=lm?new Date(lm):null;
@@ -227,7 +242,14 @@ Deno.serve(async(req)=>{
           "cache-control":"no-cache"
         }
       },5000);
+      const declaredSize=Number(r.headers.get("content-length")||"0");
+      if(declaredSize>PERSISTENCE_POLICY.max_frame_bytes){
+        return out({ok:false,error:"frame_too_large",declared_bytes:declaredSize,max_bytes:PERSISTENCE_POLICY.max_frame_bytes},413);
+      }
       const bytes=new Uint8Array(await r.arrayBuffer());
+      if(bytes.length>PERSISTENCE_POLICY.max_frame_bytes){
+        return out({ok:false,error:"frame_too_large",bytes:bytes.length,max_bytes:PERSISTENCE_POLICY.max_frame_bytes},413);
+      }
       const jpeg=r.ok&&bytes.length>=2&&bytes[0]===255&&bytes[1]===216;
       const lm=r.headers.get("last-modified");
       const capturedAt=lm?new Date(lm):null;
@@ -251,7 +273,8 @@ Deno.serve(async(req)=>{
           "x-genesis-captured-at":capturedAt.toISOString(),
           "x-genesis-frame-age-s":String(Math.round(ageS)),
           "x-genesis-frame-ttl-s":String(STARY.frame_ttl_s),
-          "x-genesis-hls-sequence":String(live.first?.sequence??"")
+          "x-genesis-hls-sequence":String(live.first?.sequence??""),
+          "x-genesis-persistence":"ephemeral-no-store"
         }
       });
     }catch(e){
@@ -283,7 +306,7 @@ Deno.serve(async(req)=>{
 
   if(req.method==="GET")return out({
     ok:true,
-    schema:"GENESIS_CAMERA_BROKER_LAB_V06",
+    schema:"GENESIS_CAMERA_BROKER_LAB_V07",
     mode:"read_only_cloud_only",
     source_count:SOURCES.length,
     sources:SOURCES.map(({config_url,hls_url,latest_mp4,...s})=>s),
@@ -294,11 +317,16 @@ Deno.serve(async(req)=>{
       coordinates:{lat:STARY.lat,lon:STARY.lon},
       orientation:STARY.orientation
     },
-    boundary:"Public camera sources only; no private feeds, credentials, cookies, identity tracking, recording, or user-device dependency."
+    persistence_policy:PERSISTENCE_POLICY,
+    boundary:"Public camera sources only; raw images/video are never persisted to Supabase Storage or database; frames are fetched on demand and discarded after the response."
   });
 
   if(req.method!=="POST")return out({ok:false,error:"method_not_allowed"},405);
   let b={};try{b=await req.json()}catch{return out({ok:false,error:"invalid_json"},400)}
+
+  if(["persist_frame","save_frame","archive_frame","upload_frame"].includes(String(b.action||""))){
+    return out({ok:false,error:"persistence_forbidden_by_policy",policy:PERSISTENCE_POLICY},403);
+  }
 
   if(b.action==="stary_rynek_live_status") return out(await staryStatus(false));
   if(b.action==="stary_rynek_frame_meta") return out(await staryFrameMeta());
