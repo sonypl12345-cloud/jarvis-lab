@@ -87,6 +87,22 @@ class PublicWhatAheadTests(unittest.TestCase):
         self.assertIn("do not identify", task)
         self.assertIn("possible candidate", task)
 
+    def test_nearby_distinguishes_no_registered_camera(self):
+        health = {}
+        report = build_public_nearby_report(
+            lat=52.3000,
+            lon=16.7000,
+            health=health,
+        )
+        self.assertEqual(
+            report["answer_state"],
+            "no_registered_public_camera_nearby",
+        )
+        self.assertEqual(
+            [r["radius_m"] for r in report["ring_diagnostics"]],
+            [100.0, 250.0, 500.0],
+        )
+
     def test_vision_request_forbids_identity_task(self):
         health = {
             "webcamera:poznan-stary-rynek": {"usable": True},
