@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .camera_ahead import heading_from_points, select_cameras_ahead
+from .camera_ahead import heading_from_points, scan_cameras_in_rings
 from .gddkia_camera_adapter import parse_camerapoints
 
 
@@ -39,7 +39,7 @@ def build_ahead_report(
         raise ValueError("snapshot points missing")
 
     cameras = parse_camerapoints(points)
-    candidates = select_cameras_ahead(
+    candidates, selected_radius_m, scan_attempts = scan_cameras_in_rings(
         cameras,
         lat=lat,
         lon=lon,
@@ -74,7 +74,7 @@ def build_ahead_report(
 
     return {
         "ok": True,
-        "mode": "camera_ahead_lab_v0.1",
+        "mode": "camera_ahead_lab_v0.2_local_rings",
         "snapshot_id": snapshot.get("snapshot_id"),
         "snapshot_captured_at": snapshot.get("captured_at"),
         "origin": {
@@ -86,6 +86,8 @@ def build_ahead_report(
         "camera_records_with_images": len(cameras),
         "selected": rows,
         "selected_count": len(rows),
+        "selected_radius_m": selected_radius_m,
+        "scan_attempts": scan_attempts,
         "answer_state": "ready_for_vision" if rows else "no_public_camera_ahead",
         "boundary": (
             "Public GDDKiA/KPD imagery only. Human/vision interpretation "
