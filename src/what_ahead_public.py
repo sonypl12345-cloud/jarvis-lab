@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-from .camera_ahead import select_cameras_ahead
+from .camera_ahead import scan_cameras_in_rings
 from .public_camera_registry import (
     SOURCES,
     PublicVisualSource,
@@ -30,7 +30,7 @@ def build_public_ahead_report(
     heading: float,
     health: Mapping[str, Mapping[str, Any]],
     sources: Iterable[PublicVisualSource] = SOURCES,
-    max_distance_m: float = 5000.0,
+    max_distance_m: float = 500.0,
     half_cone_deg: float = 55.0,
     limit: int = 3,
 ) -> Dict[str, Any]:
@@ -47,7 +47,7 @@ def build_public_ahead_report(
         source_list,
         healthy_ids=healthy_ids,
     )
-    candidates = select_cameras_ahead(
+    candidates, selected_radius_m, scan_attempts = scan_cameras_in_rings(
         records,
         lat=lat,
         lon=lon,
@@ -108,7 +108,7 @@ def build_public_ahead_report(
 
     return {
         "ok": True,
-        "mode": "public_camera_ahead_lab_v0.1",
+        "mode": "public_camera_ahead_lab_v0.2_local_rings",
         "origin": {
             "lat": lat,
             "lon": lon,
@@ -119,11 +119,101 @@ def build_public_ahead_report(
         "eligible_snapshot_records": len(records),
         "selected": selected,
         "selected_count": len(selected),
+        "selected_radius_m": selected_radius_m,
+        "scan_attempts": scan_attempts,
         "vision_requests": vision_requests,
         "answer_state": "ready_for_vision" if vision_requests else "no_verified_public_snapshot_ahead",
         "boundary": (
             "Only intentionally public, runtime-health-verified snapshots are "
             "eligible. No private CCTV, authentication bypass, face search, "
             "or claim of freshness without source evidence."
+        ),
+    }
+
+
+def build_public_nearby_report(
+    *,
+    lat: float,
+    lon: float,
+    health: Mapping[str, Mapping[str, Any]],
+    sources: Iterable[PublicVisualSource] = SOURCES,
+    max_distance_m: float = 500.0,
+    limit: int = 3,
+) -> Dict[str, Any]:
+    """Find the nearest usable public camera around the owner in local rings.
+
+    This is for "can you see me / what is near me?". It deliberately ignores
+    travel heading and does not perform identity recognition.
+    """
+    source_list = tuple(sources)
+    source_by_id = _source_index(source_list)
+    healthy_ids = {
+        source_id
+        for source_id, status in health.items()
+        if isinstance(status, Mapping) and status.get("usable") is True
+    }
+    records = snapshot_camera_records(source_list, healthy_ids=healthy_ids)
+    candidates, selected_radius_m, scan_attempts = scan_cameras_in_rings(
+        records,
+        lat=lat,
+        lon=lon,
+        heading=None,
+        max_distance_m=max_distance_m,
+        limit=limit,
+    )
+
+    selected = []
+    for item in candidates:
+        source = source_by_id[item.camera.camera_id]
+        status = dict(health.get(source.source_id) or {})
+        selected.append({
+            "source_id": source.source_id,
+            "name": source.name,
+            "provider": source.provider,
+            "scene_kind": source.scene_kind,
+            "distance_m": round(item.distance_m, 1),
+            "bearing_deg": round(item.bearing_deg, 1),
+            "media_kind": source.media_kind,
+            "media_url": source.media_url,
+            "source_page": source.source_page,
+            "health": {
+                "http_status": status.get("http_status"),
+                "content_type": status.get("content_type"),
+                "bytes": status.get("bytes"),
+                "elapsed_ms": status.get("elapsed_ms"),
+            },
+        })
+
+    vision_requests = [{
+        "source_id": item["source_id"],
+        "image_url": item["media_url"],
+        "task": (
+            "Describe observable people/silhouettes, traffic and scene context. "
+            "Do not identify any person. The owner may only be described as a "
+            "possible candidate when location/time context makes that plausible."
+        ),
+        "provenance": {
+            "provider": item["provider"],
+            "source_page": item["source_page"],
+            "capture_time": None,
+        },
+    } for item in selected if item["media_kind"] == "snapshot"]
+
+    return {
+        "ok": True,
+        "mode": "public_camera_nearby_lab_v0.1_local_rings",
+        "origin": {"lat": lat, "lon": lon},
+        "registered_sources": len(source_list),
+        "health_verified_source_ids": sorted(healthy_ids),
+        "eligible_snapshot_records": len(records),
+        "selected": selected,
+        "selected_count": len(selected),
+        "selected_radius_m": selected_radius_m,
+        "scan_attempts": scan_attempts,
+        "vision_requests": vision_requests,
+        "answer_state": "ready_for_vision" if vision_requests else "no_verified_public_snapshot_nearby",
+        "boundary": (
+            "Public, runtime-health-verified cameras only; local scan stops at "
+            "the configured radius. No private CCTV or identity recognition."
         ),
     }
