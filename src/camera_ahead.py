@@ -14,6 +14,7 @@ import time
 
 
 EARTH_RADIUS_M = 6_371_000.0
+DEFAULT_LOCAL_SCAN_RADII_M = (100.0, 250.0, 500.0)
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,118 @@ def heading_from_points(
     if distance_m(prev_lat, prev_lon, lat, lon) < min_move_m:
         return None
     return bearing_deg(prev_lat, prev_lon, lat, lon)
+
+
+def local_scan_radii(
+    max_distance_m: float = 500.0,
+    *,
+    base_radii=DEFAULT_LOCAL_SCAN_RADII_M,
+):
+    """Return near-to-far scan radii, never widening past max_distance_m.
+
+    The normal owner-local path is 100 -> 250 -> 500 m. A caller may request
+    a different explicit ceiling; that ceiling is appended as the last ring.
+    """
+    if max_distance_m <= 0:
+        raise ValueError("max_distance_m must be > 0")
+    radii = sorted({float(r) for r in base_radii if 0 < float(r) <= max_distance_m})
+    if not radii or radii[-1] < float(max_distance_m):
+        radii.append(float(max_distance_m))
+    return tuple(radii)
+
+
+def select_cameras_nearby(
+    cameras: Iterable[CameraRecord],
+    *,
+    lat: float,
+    lon: float,
+    max_distance_m: float = 500.0,
+    limit: int = 3,
+    now_ts: Optional[float] = None,
+    stale_after_s: float = 900.0,
+) -> List[AheadCandidate]:
+    """Rank usable public cameras around the owner, independent of heading."""
+    if max_distance_m <= 0:
+        raise ValueError("max_distance_m must be > 0")
+    if limit <= 0:
+        return []
+
+    now = time.time() if now_ts is None else now_ts
+    out: List[AheadCandidate] = []
+    for camera in cameras:
+        if not camera.public or not camera.image_url:
+            continue
+        dist = distance_m(lat, lon, camera.lat, camera.lon)
+        if dist > max_distance_m:
+            continue
+        freshness: Optional[float] = None
+        freshness_penalty = 0.0
+        if camera.observed_at is not None:
+            freshness = max(0.0, now - camera.observed_at)
+            if freshness > stale_after_s:
+                continue
+            freshness_penalty = 0.30 * min(1.0, freshness / stale_after_s)
+        cam_bearing = bearing_deg(lat, lon, camera.lat, camera.lon)
+        out.append(
+            AheadCandidate(
+                camera=camera,
+                distance_m=dist,
+                bearing_deg=cam_bearing,
+                angle_delta_deg=0.0,
+                freshness_s=freshness,
+                score=dist * (1.0 + freshness_penalty),
+            )
+        )
+    out.sort(key=lambda x: (x.score, x.distance_m, x.camera.camera_id))
+    return out[:limit]
+
+
+def scan_cameras_in_rings(
+    cameras: Iterable[CameraRecord],
+    *,
+    lat: float,
+    lon: float,
+    heading: Optional[float] = None,
+    max_distance_m: float = 500.0,
+    half_cone_deg: float = 55.0,
+    limit: int = 3,
+    now_ts: Optional[float] = None,
+    stale_after_s: float = 900.0,
+):
+    """Scan 100 -> 250 -> 500 m and stop on the first usable ring.
+
+    heading=None means owner-nearby mode (360 degrees). Supplying a heading
+    keeps the existing Camera Ahead forward-cone behavior.
+    """
+    camera_list = list(cameras)
+    attempts = []
+    for radius in local_scan_radii(max_distance_m):
+        if heading is None:
+            selected = select_cameras_nearby(
+                camera_list,
+                lat=lat,
+                lon=lon,
+                max_distance_m=radius,
+                limit=limit,
+                now_ts=now_ts,
+                stale_after_s=stale_after_s,
+            )
+        else:
+            selected = select_cameras_ahead(
+                camera_list,
+                lat=lat,
+                lon=lon,
+                heading=heading,
+                max_distance_m=radius,
+                half_cone_deg=half_cone_deg,
+                limit=limit,
+                now_ts=now_ts,
+                stale_after_s=stale_after_s,
+            )
+        attempts.append({"radius_m": radius, "usable_count": len(selected)})
+        if selected:
+            return selected, radius, attempts
+    return [], None, attempts
 
 
 def select_cameras_ahead(
