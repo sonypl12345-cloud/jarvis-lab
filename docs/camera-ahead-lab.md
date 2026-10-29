@@ -192,3 +192,37 @@ Direction policy:
 - do not infer a heading from the current Termux Rotation Vector output until its representation is independently calibrated.
 
 This keeps the control path agent-first and UI-independent: no browser page or visual map is required for JARVIS to locate the owner.
+
+
+## JARVIS eyes on-demand canonical v1
+
+Canonical runtime is UI-independent and battery-safe.
+
+### Owner location
+- Private functions live in `genesis_internal`; `anon` and `authenticated` have no EXECUTE.
+- `owner_location_start_v01(force)` first checks the `oneplus10t-b40` heartbeat.
+- If heartbeat age is over 45 s, it returns `bridge_unavailable` and does **not** enqueue GPS.
+- Fresh requests are submitted through canonical `bridge40_submit_command`, not direct `bridge30_commands` inserts.
+- The device executes `~/GenesisProjects/InteropLab/genesis_location_snapshot_v01.py` (ECO v3 contract).
+- Location is enabled only when it was initially off, one bounded `termux-location` snapshot is taken, then the original Location state must be restored and verified.
+- Raw GPS history is not stored. Only `live_map_presence.session_hash='owner-current'` is overwritten; TTL is 90 s.
+- Stale pending location commands are expired instead of replayed later.
+
+### Public eyes registry
+- `genesis_internal.public_eye_registry_v01` stores metadata only: name, coordinates, operator, source page, operational state, and optional Broker source id.
+- It stores no JPEG, HLS segment, MP4, or other raw media.
+- States are separated into `LIVE_VERIFIED`, `SOURCE_LIVE_PAGE`, `UNKNOWN`, and `OFFLINE_REPORTED`.
+- Automatic selection excludes uncertain/offline entries by default.
+
+### Agent API
+- `jarvis_eyes_start_v01('nearby'|'ahead')`
+  - uses a still-fresh owner snapshot immediately;
+  - otherwise starts one on-demand GPS snapshot;
+  - refuses to start GPS when Bridge is stale.
+- `jarvis_eyes_finish_v01(command_id, mode)`
+  - finalizes the verified GPS receipt;
+  - returns either nearest public eyes or eyes inside the forward cone.
+- `nearest_public_eyes_v01` sorts literally by distance and also returns a separately ranked `best_eye` for reliable Vision.
+- `public_eyes_ahead_v01` uses GPS/recent verified heading and labels reused low-speed heading explicitly.
+
+Battery invariant: no continuous GPS polling, no camera polling, and no raw camera-media persistence in Supabase.
