@@ -1,99 +1,93 @@
 #!/usr/bin/env python3
-import json, time
+import json, time, subprocess, shutil, sys
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from urllib.request import Request, urlopen
+from urllib.parse import urljoin
 
-URL="https://poznan-stary-rynek.webcamera.pl/"
-OUT=Path("data/stary_live_frame.png")
+HLS="https://hoktastream2.webcamera.pl/poznan_cam_a2ec1b/poznan_cam_a2ec1b.stream/playlist.m3u8"
+OUT=Path("data/stary_live_frame.jpg")
 META=Path("data/stary_live_frame.json")
 OUT.parent.mkdir(parents=True,exist_ok=True)
 
+UA="GENESIS-Stary-Rynek-Live-Frame-LAB/0.2"
+
+def get_text(url,timeout=15):
+    req=Request(url,headers={"User-Agent":UA,"Accept":"application/vnd.apple.mpegurl,application/x-mpegurl,*/*"})
+    with urlopen(req,timeout=timeout) as r:
+        return r.read().decode("utf-8","replace"),r.status,dict(r.headers)
+
+def parse_master(text,base):
+    lines=[x.strip() for x in text.splitlines() if x.strip()]
+    variants=[]
+    for i,line in enumerate(lines):
+        if line.startswith("#EXT-X-STREAM-INF:") and i+1<len(lines) and not lines[i+1].startswith("#"):
+            variants.append(urljoin(base,lines[i+1]))
+    return variants
+
+def parse_media(text,base):
+    lines=[x.strip() for x in text.splitlines() if x.strip()]
+    seq=None
+    for line in lines:
+        if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+            try: seq=int(line.split(":",1)[1])
+            except: seq=None
+    segs=[urljoin(base,x) for x in lines if not x.startswith("#") and ".ts" in x]
+    return {"sequence":seq,"segments":segs,"latest_segment":segs[-1] if segs else None}
+
 def main():
-    meta={"source":URL,"captured_at_epoch":time.time(),"ok":False}
-    with sync_playwright() as p:
-        browser=p.chromium.launch(headless=True,args=["--autoplay-policy=no-user-gesture-required","--disable-dev-shm-usage"])
-        ctx=browser.new_context(viewport={"width":1280,"height":900},locale="pl-PL")
-        page=ctx.new_page()
-        page.goto(URL,wait_until="domcontentloaded",timeout=90000)
+    meta={"source":HLS,"captured_at_epoch":time.time(),"ok":False}
+    master,status,_=get_text(HLS)
+    if status!=200 or "#EXTM3U" not in master:
+        meta["error"]="master_unavailable"; META.write_text(json.dumps(meta,indent=2)); return 2
+    variants=parse_master(master,HLS)
+    media_url=variants[0] if variants else HLS
 
-        for label in ("Akceptuję","Zgadzam się","Accept","OK","Zamknij"):
-            try:
-                loc=page.get_by_text(label,exact=True)
-                if loc.count() and loc.first.is_visible():
-                    loc.first.click(timeout=2500)
-                    time.sleep(1)
-                    break
-            except Exception:
-                pass
+    m1,st1,_=get_text(media_url)
+    p1=parse_media(m1,media_url)
+    time.sleep(7)
+    m2,st2,_=get_text(media_url)
+    p2=parse_media(m2,media_url)
 
-        deadline=time.time()+55
-        chosen=None
-        info=None
-        while time.time()<deadline:
-            for frame in page.frames:
-                try:
-                    vids=frame.locator("video")
-                    for i in range(vids.count()):
-                        v=vids.nth(i)
-                        if not v.is_visible():
-                            continue
-                        try:
-                            frame.evaluate("""(el)=>{el.muted=true; el.volume=0; const p=el.play(); if(p&&p.catch)p.catch(()=>{});}""",v.element_handle())
-                        except Exception:
-                            pass
-                        try:
-                            d=v.evaluate("""el=>({
-                              readyState:el.readyState,
-                              currentTime:el.currentTime,
-                              videoWidth:el.videoWidth,
-                              videoHeight:el.videoHeight,
-                              paused:el.paused,
-                              ended:el.ended,
-                              src:el.currentSrc||el.src||""
-                            })""")
-                        except Exception:
-                            continue
-                        if d.get("readyState",0)>=2 and d.get("videoWidth",0)>=320 and d.get("videoHeight",0)>=180:
-                            chosen=v
-                            info=d
-                            break
-                    if chosen: break
-                except Exception:
-                    pass
-            if chosen: break
-            time.sleep(2)
+    advanced=(
+        p1["sequence"] is not None and p2["sequence"] is not None and p2["sequence"]>p1["sequence"]
+    ) or (
+        p1["latest_segment"] and p2["latest_segment"] and p1["latest_segment"]!=p2["latest_segment"]
+    )
+    meta.update({"media_url":media_url,"first":p1,"second":p2,"live_advanced":bool(advanced)})
+    if not advanced:
+        meta["error"]="hls_not_advancing"; META.write_text(json.dumps(meta,ensure_ascii=False,indent=2)); return 3
 
-        if not chosen:
-            meta.update({"ok":False,"error":"live_video_not_ready","page_url":page.url,"frames":[f.url for f in page.frames]})
-            page.screenshot(path=str(OUT),full_page=False)
-        else:
-            t0=float(info.get("currentTime") or 0)
-            time.sleep(4)
-            try:
-                info2=chosen.evaluate("""el=>({
-                  readyState:el.readyState,currentTime:el.currentTime,
-                  videoWidth:el.videoWidth,videoHeight:el.videoHeight,
-                  paused:el.paused,ended:el.ended,src:el.currentSrc||el.src||""
-                })""")
-            except Exception:
-                info2=info
-            advanced=float(info2.get("currentTime") or 0)>t0+0.5
-            chosen.screenshot(path=str(OUT))
-            meta.update({
-                "ok":True,
-                "live_advanced":advanced,
-                "before_current_time":t0,
-                "after_current_time":float(info2.get("currentTime") or 0),
-                "video_width":info2.get("videoWidth"),
-                "video_height":info2.get("videoHeight"),
-                "ready_state":info2.get("readyState"),
-                "paused":info2.get("paused"),
-                "page_url":page.url
-            })
-        META.write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8")
-        browser.close()
-    print(json.dumps(meta,ensure_ascii=False))
-    return 0 if meta.get("ok") and meta.get("live_advanced") else 2
+    ffmpeg=shutil.which("ffmpeg")
+    if not ffmpeg:
+        meta["error"]="ffmpeg_missing"; META.write_text(json.dumps(meta,ensure_ascii=False,indent=2)); return 4
+
+    cmd=[
+      ffmpeg,"-hide_banner","-loglevel","error",
+      "-live_start_index","-1",
+      "-i",media_url,
+      "-frames:v","1",
+      "-q:v","2",
+      "-vf","scale='min(1280,iw)':-2",
+      "-y",str(OUT)
+    ]
+    try:
+        cp=subprocess.run(cmd,capture_output=True,text=True,timeout=45)
+    except subprocess.TimeoutExpired:
+        meta["error"]="ffmpeg_timeout"; META.write_text(json.dumps(meta,ensure_ascii=False,indent=2)); return 5
+
+    if cp.returncode!=0 or not OUT.is_file() or OUT.stat().st_size<1000:
+        meta.update({"error":"ffmpeg_capture_failed","returncode":cp.returncode,"stderr":(cp.stderr or "")[-2000:]})
+        META.write_text(json.dumps(meta,ensure_ascii=False,indent=2)); return 6
+
+    meta.update({
+      "ok":True,
+      "captured_at_epoch":time.time(),
+      "bytes":OUT.stat().st_size,
+      "live_advanced":True
+    })
+    META.write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding="utf-8")
+    print(json.dumps({k:v for k,v in meta.items() if k not in ("first","second")},ensure_ascii=False))
+    return 0
 
 if __name__=="__main__":
     raise SystemExit(main())
