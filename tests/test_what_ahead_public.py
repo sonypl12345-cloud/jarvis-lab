@@ -1,7 +1,7 @@
 import unittest
 
 from src.public_camera_registry import SOURCES
-from src.what_ahead_public import build_public_ahead_report
+from src.what_ahead_public import build_public_ahead_report, build_public_nearby_report
 
 
 class PublicWhatAheadTests(unittest.TestCase):
@@ -70,6 +70,22 @@ class PublicWhatAheadTests(unittest.TestCase):
             max_distance_m=3000,
         )
         self.assertEqual(report["selected"], [])
+
+    def test_nearby_owner_scan_is_local_and_identity_free(self):
+        health = {
+            "lookcam:poznan-hetmanska": {"usable": True},
+        }
+        report = build_public_nearby_report(
+            lat=52.3905,
+            lon=16.8942,
+            health=health,
+        )
+        self.assertEqual(report["answer_state"], "ready_for_vision")
+        self.assertLessEqual(report["selected_radius_m"], 500.0)
+        self.assertEqual(report["selected"][0]["source_id"], "lookcam:poznan-hetmanska")
+        task = report["vision_requests"][0]["task"].lower()
+        self.assertIn("do not identify", task)
+        self.assertIn("possible candidate", task)
 
     def test_vision_request_forbids_identity_task(self):
         health = {
