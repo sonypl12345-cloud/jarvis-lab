@@ -151,3 +151,70 @@ GDDKiA's official road-information map explicitly provides road-camera imagery. 
 Public intentionally published cameras only.
 
 No private feeds, credential replay, access-control bypass, public face tracking, identity search, raw bystander-footage archive, or owner route history.
+
+
+## Local coverage policy (0–2 km)
+
+For requests meaning “right near me”, JARVIS must not present a healthy but distant city camera as if it were local.
+
+Canonical threshold:
+
+- target local-public radius: 2,000 m;
+- `genesis_internal.local_public_coverage_v01(2000)` reports whether a useful auto-select public Vision eye exists inside that radius;
+- when no such eye exists, `coverage_gap=true`;
+- a farther public camera remains a fallback only, not the primary “near me” answer.
+
+Current Poznań south/west LAB finding on 2026-10-29: physical municipal/ZDM cameras exist around Górczyn/Hetmańska, but their streams are not generally public; the historical public Hetmańska/Głogowska and ZDM Górczyn images are currently unavailable. Do not bypass non-public monitoring.
+
+## Owner rear eye — 0 m fallback
+
+The preferred local-gap fallback is the owner-authorized OnePlus rear camera, one-shot only.
+
+Verified LAB probe on `oneplus10t-b40`:
+
+- `termux-camera-info`: PASS;
+- 4 camera IDs visible to Termux API;
+- rear camera `id=0`: PASS;
+- one JPEG captured successfully;
+- test frame size: 2,827,758 bytes;
+- JPEG signature verified;
+- test frame deleted in the same process;
+- no raw frame persisted to Supabase or GitHub.
+
+Target chain:
+
+`user intent -> one-shot rear camera -> local VLM -> text-only scene summary -> delete JPEG -> JARVIS response`
+
+Privacy contract:
+
+- no continuous video;
+- no face identification;
+- people remain anonymous;
+- no raw camera upload to Supabase Storage/database;
+- no raw camera attachment is required for the agent path;
+- camera runs only for an explicit context such as “look what is near me / ahead of me”.
+
+## Local VLM LAB
+
+The phone already has a multimodal-capable `llama.cpp` build with `llama-mtmd-cli`.
+
+Selected model: `ggml-org/SmolVLM-500M-Instruct-GGUF`, Q8_0 plus Q8_0 multimodal projector.
+
+Fixed integrity contract:
+
+- model: 436,806,912 bytes, SHA-256 `9d4612de6a42214499e301494a3ecc2be0abdd9de44e663bda63f1152fad1bf4`;
+- projector: 108,783,360 bytes, SHA-256 `d1eb8b6b23979205fdf63703ed10f788131a3f812c7b1f72e0119d5d81295150`.
+
+Installer policy:
+
+- LAB only;
+- fixed URLs and hashes, no arbitrary download target;
+- Wi-Fi only;
+- battery/space guard;
+- resumable `.part`;
+- SHA-256 before atomic rename;
+- no local inference while installation is incomplete.
+
+The local Vision runner is one-shot and guarded: rear-camera temp JPEG -> optional resize -> `llama-mtmd-cli` -> short navigation-oriented anonymous scene description -> temp deletion in `finally`.
+
+Do not mark Local VLM READY until both model files are fully verified and one real camera->description->delete test passes.
