@@ -4,6 +4,8 @@ from src.camera_ahead import (
     CameraRecord,
     angular_distance_deg,
     heading_from_points,
+    local_scan_radii,
+    scan_cameras_in_rings,
     select_cameras_ahead,
 )
 
@@ -84,6 +86,59 @@ class CameraAheadTests(unittest.TestCase):
             stale_after_s=900,
         )
         self.assertEqual(result, [])
+
+    def test_local_scan_radii_default(self):
+        self.assertEqual(local_scan_radii(), (100.0, 250.0, 500.0))
+
+    def test_nearby_scan_stops_on_first_usable_ring_and_ignores_heading(self):
+        cams = [
+            CameraRecord(
+                "behind-near",
+                "Behind but near",
+                52.39955,
+                16.9000,
+                "test",
+                image_url="https://example.test/frame.jpg",
+            ),
+            CameraRecord(
+                "farther",
+                "Farther",
+                52.4020,
+                16.9000,
+                "test",
+                image_url="https://example.test/far.jpg",
+            ),
+        ]
+        selected, radius, attempts = scan_cameras_in_rings(
+            cams,
+            lat=52.4000,
+            lon=16.9000,
+            heading=None,
+        )
+        self.assertEqual(radius, 100.0)
+        self.assertEqual(selected[0].camera.camera_id, "behind-near")
+        self.assertEqual(len(attempts), 1)
+
+    def test_ahead_scan_expands_100_then_250_but_not_farther_after_success(self):
+        cams = [
+            CameraRecord(
+                "north-200",
+                "North 200m",
+                52.4018,
+                16.9000,
+                "test",
+                image_url="https://example.test/frame.jpg",
+            )
+        ]
+        selected, radius, attempts = scan_cameras_in_rings(
+            cams,
+            lat=52.4000,
+            lon=16.9000,
+            heading=0.0,
+        )
+        self.assertEqual(radius, 250.0)
+        self.assertEqual([a["radius_m"] for a in attempts], [100.0, 250.0])
+        self.assertEqual(selected[0].camera.camera_id, "north-200")
 
     def test_prefers_nearer_camera_when_angles_are_equal(self):
         cams = [
