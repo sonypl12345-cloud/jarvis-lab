@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-from .camera_ahead import scan_cameras_in_rings
+from .camera_ahead import distance_m, local_scan_radii, scan_cameras_in_rings
 from .public_camera_registry import (
     SOURCES,
     PublicVisualSource,
@@ -199,9 +199,47 @@ def build_public_nearby_report(
         },
     } for item in selected if item["media_kind"] == "snapshot"]
 
+    ring_diagnostics = []
+    for radius in local_scan_radii(max_distance_m):
+        registered = [
+            source for source in source_list
+            if source.public
+            and distance_m(lat, lon, source.lat, source.lon) <= radius
+        ]
+        registered_snapshots = [
+            source for source in registered if source.media_kind == "snapshot"
+        ]
+        healthy_snapshots = [
+            source for source in registered_snapshots
+            if source.source_id in healthy_ids
+        ]
+        ring_diagnostics.append({
+            "radius_m": radius,
+            "registered_public_sources": len(registered),
+            "registered_public_snapshots": len(registered_snapshots),
+            "healthy_public_snapshots": len(healthy_snapshots),
+        })
+
+    registered_within_max = (
+        ring_diagnostics[-1]["registered_public_sources"]
+        if ring_diagnostics else 0
+    )
+    healthy_within_max = (
+        ring_diagnostics[-1]["healthy_public_snapshots"]
+        if ring_diagnostics else 0
+    )
+    if vision_requests:
+        answer_state = "ready_for_vision"
+    elif registered_within_max == 0:
+        answer_state = "no_registered_public_camera_nearby"
+    elif healthy_within_max == 0:
+        answer_state = "public_camera_nearby_but_no_usable_snapshot"
+    else:
+        answer_state = "no_verified_public_snapshot_nearby"
+
     return {
         "ok": True,
-        "mode": "public_camera_nearby_lab_v0.1_local_rings",
+        "mode": "public_camera_nearby_lab_v0.2_local_rings",
         "origin": {"lat": lat, "lon": lon},
         "registered_sources": len(source_list),
         "health_verified_source_ids": sorted(healthy_ids),
@@ -210,8 +248,9 @@ def build_public_nearby_report(
         "selected_count": len(selected),
         "selected_radius_m": selected_radius_m,
         "scan_attempts": scan_attempts,
+        "ring_diagnostics": ring_diagnostics,
         "vision_requests": vision_requests,
-        "answer_state": "ready_for_vision" if vision_requests else "no_verified_public_snapshot_nearby",
+        "answer_state": answer_state,
         "boundary": (
             "Public, runtime-health-verified cameras only; local scan stops at "
             "the configured radius. No private CCTV or identity recognition."
