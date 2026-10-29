@@ -89,13 +89,16 @@ def select_cameras_ahead(
     lat: float,
     lon: float,
     heading: float,
-    max_distance_m: float = 5000.0,
+    max_distance_m: float = 500.0,
     half_cone_deg: float = 55.0,
     limit: int = 3,
     now_ts: Optional[float] = None,
     stale_after_s: float = 900.0,
 ) -> List[AheadCandidate]:
     """Rank public cameras that are geographically ahead of the user.
+
+    The default local-owner scan radius is intentionally 500 m. Wider
+    searches must be requested explicitly by the caller.
 
     Ranking favors:
     1. cameras inside the forward cone,
