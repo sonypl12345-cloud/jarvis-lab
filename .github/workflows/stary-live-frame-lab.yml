@@ -1,0 +1,39 @@
+name: Stary Rynek Live Frame LAB
+
+on:
+  push:
+    branches:
+      - lab/camera-ahead-v01
+    paths:
+      - tools/stary_live_frame.py
+      - .github/workflows/stary-live-frame-lab.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned Playwright
+        run: |
+          python -m pip install --disable-pip-version-check playwright==1.55.0
+          python -m playwright install --with-deps chromium
+      - name: Capture one verified live player frame
+        run: python tools/stary_live_frame.py
+      - name: Upload ephemeral LAB frame
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stary-rynek-live-frame
+          path: |
+            data/stary_live_frame.png
+            data/stary_live_frame.json
+          if-no-files-found: error
+          retention-days: 1
