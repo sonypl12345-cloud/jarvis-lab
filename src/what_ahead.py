@@ -28,7 +28,7 @@ def build_ahead_report(
     lat: float,
     lon: float,
     heading: float,
-    max_distance_m: float = 5000.0,
+    max_distance_m: float = 500.0,
     limit: int = 3,
     now_ts: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -106,7 +106,7 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--heading", type=float)
     group.add_argument("--prev", nargs=2, type=float, metavar=("PREV_LAT", "PREV_LON"))
-    parser.add_argument("--max-distance-m", type=float, default=5000.0)
+    parser.add_argument("--max-distance-m", type=float, default=500.0)
     parser.add_argument("--limit", type=int, default=3)
     args = parser.parse_args()
 
