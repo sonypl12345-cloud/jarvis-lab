@@ -48,7 +48,7 @@ Deno.serve(async(req)=>{
         redirect:"follow",
         headers:{
           ...(init.headers||{}),
-          "user-agent":"GENESIS-Camera-Broker-LAB/0.13 (+ephemeral-public-cameras;owner-context-private)"
+          "user-agent":"GENESIS-Camera-Broker-LAB/0.14 (+registry-eyes;ephemeral-public-cameras;owner-context-private)"
         }
       });
     } finally { clearTimeout(timer); }
@@ -283,6 +283,142 @@ Deno.serve(async(req)=>{
     }
   }
 
+  const resolvePublicEye=(eyeId)=>{
+    const id=String(eyeId||"").trim();
+    let m=id.match(/^webcamera:([A-Za-z0-9._-]{1,180})$/);
+    if(m){
+      return {
+        eye_id:id,
+        provider:"webcamera.pl",
+        url:"https://imageserver.webcamera.pl/miniaturki/"+m[1]+".jpg",
+        ttl_s:900,
+        freshness_mode:"last_modified"
+      };
+    }
+    m=id.match(/^argos:([0-9a-f]{18})$/);
+    if(m){
+      return {
+        eye_id:id,
+        provider:"argosatlas_public_index",
+        url:"https://argosatlas.com/api/cam/"+m[1]+"/image",
+        ttl_s:300,
+        freshness_mode:"cache_bounded"
+      };
+    }
+    return null;
+  };
+
+  const parseMaxAge=(value)=>{
+    const m=String(value||"").match(/(?:^|[, ]+)max-age=([0-9]+)/i);
+    return m?Number(m[1]):null;
+  };
+
+  async function publicEyeProbe(eyeId){
+    const eye=resolvePublicEye(eyeId);
+    if(!eye)return {ok:false,error:"eye_id_not_allowlisted"};
+    try{
+      const r=await fetchT(eye.url,{
+        method:"HEAD",
+        headers:{
+          "accept":"image/jpeg,image/*;q=0.8,*/*;q=0.1",
+          "cache-control":"no-cache"
+        }
+      },5000);
+      const ct=String(r.headers.get("content-type")||"").toLowerCase();
+      const len=Number(r.headers.get("content-length")||"0");
+      const cc=r.headers.get("cache-control");
+      const lm=r.headers.get("last-modified");
+      const maxAge=parseMaxAge(cc);
+      const now=new Date();
+      const captured=lm?new Date(lm):null;
+      const ageS=captured&&Number.isFinite(captured.getTime())
+        ?Math.max(0,(now.getTime()-captured.getTime())/1000):null;
+      const image=r.ok&&ct.startsWith("image/");
+      const sizeOk=!Number.isFinite(len)||len<=0||len<=PERSISTENCE_POLICY.max_frame_bytes;
+      const freshnessOk=eye.freshness_mode==="last_modified"
+        ?(ageS!==null&&ageS<=eye.ttl_s)
+        :(maxAge!==null&&maxAge<=eye.ttl_s);
+      return {
+        ok:Boolean(image&&sizeOk&&freshnessOk),
+        eye_id:eye.eye_id,
+        provider:eye.provider,
+        checked_at:now.toISOString(),
+        http_status:r.status,
+        content_type:r.headers.get("content-type"),
+        content_length:Number.isFinite(len)?len:null,
+        cache_control:cc,
+        cache_max_age_s:maxAge,
+        last_modified:lm,
+        age_s:ageS,
+        ttl_s:eye.ttl_s,
+        freshness_mode:eye.freshness_mode,
+        freshness_ok:freshnessOk,
+        image_url:eye.url,
+        raw_media_persisted:false
+      };
+    }catch(e){
+      return {ok:false,eye_id:eye.eye_id,provider:eye.provider,error:e instanceof Error?e.message:String(e),raw_media_persisted:false};
+    }
+  }
+
+  async function publicEyeFrame(eyeId){
+    const eye=resolvePublicEye(eyeId);
+    if(!eye)return out({ok:false,error:"eye_id_not_allowlisted"},400);
+    try{
+      const u=eye.provider==="webcamera.pl"
+        ?eye.url+(eye.url.includes("?")?"&":"?")+"genesis="+Date.now()
+        :eye.url;
+      const r=await fetchT(u,{
+        headers:{
+          "accept":"image/jpeg,image/*;q=0.8,*/*;q=0.1",
+          "cache-control":"no-cache"
+        }
+      },6000);
+      const declared=Number(r.headers.get("content-length")||"0");
+      if(Number.isFinite(declared)&&declared>PERSISTENCE_POLICY.max_frame_bytes){
+        return out({ok:false,error:"frame_too_large",declared_bytes:declared,max_bytes:PERSISTENCE_POLICY.max_frame_bytes},413);
+      }
+      const bytes=new Uint8Array(await r.arrayBuffer());
+      if(bytes.length>PERSISTENCE_POLICY.max_frame_bytes){
+        return out({ok:false,error:"frame_too_large",bytes:bytes.length,max_bytes:PERSISTENCE_POLICY.max_frame_bytes},413);
+      }
+      const jpeg=bytes.length>=2&&bytes[0]===255&&bytes[1]===216;
+      const ct=String(r.headers.get("content-type")||"").toLowerCase();
+      const cc=r.headers.get("cache-control");
+      const lm=r.headers.get("last-modified");
+      const maxAge=parseMaxAge(cc);
+      const captured=lm?new Date(lm):null;
+      const now=new Date();
+      const ageS=captured&&Number.isFinite(captured.getTime())
+        ?Math.max(0,(now.getTime()-captured.getTime())/1000):null;
+      const freshnessOk=eye.freshness_mode==="last_modified"
+        ?(ageS!==null&&ageS<=eye.ttl_s)
+        :(maxAge!==null&&maxAge<=eye.ttl_s);
+      if(!r.ok||!jpeg||!ct.startsWith("image/")||!freshnessOk){
+        return out({
+          ok:false,error:"frame_unavailable_or_stale",
+          http_status:r.status,jpeg,content_type:r.headers.get("content-type"),
+          age_s:ageS,cache_max_age_s:maxAge,ttl_s:eye.ttl_s,
+          freshness_mode:eye.freshness_mode
+        },503);
+      }
+      return new Response(bytes,{
+        status:200,
+        headers:{
+          "content-type":"image/jpeg",
+          "cache-control":"no-store",
+          "x-genesis-eye-id":eye.eye_id,
+          "x-genesis-provider":eye.provider,
+          "x-genesis-frame-ttl-s":String(eye.ttl_s),
+          "x-genesis-freshness-mode":eye.freshness_mode,
+          "x-genesis-persistence":"ephemeral-no-store"
+        }
+      });
+    }catch(e){
+      return out({ok:false,error:"frame_fetch_failed",detail:e instanceof Error?e.message:String(e)},502);
+    }
+  }
+
   const probe=async s=>{
     if(s.id===STARY.id){
       const live=await staryStatus(false);
@@ -307,7 +443,7 @@ Deno.serve(async(req)=>{
 
   if(req.method==="GET")return out({
     ok:true,
-    schema:"GENESIS_CAMERA_BROKER_LAB_V13",
+    schema:"GENESIS_CAMERA_BROKER_LAB_V14",
     mode:"read_only_cloud_only",
     source_count:SOURCES.length,
     sources:SOURCES.map(({config_url,hls_url,latest_mp4,...s})=>s),
@@ -329,6 +465,9 @@ Deno.serve(async(req)=>{
     return out({ok:false,error:"persistence_forbidden_by_policy",policy:PERSISTENCE_POLICY},403);
   }
 
+  if(b.action==="public_eye_probe") return out(await publicEyeProbe(b.eye_id));
+  if(b.action==="public_eye_frame") return await publicEyeFrame(b.eye_id);
+
   if(b.action==="stary_rynek_live_status") return out(await staryStatus(false));
   if(b.action==="stary_rynek_frame_meta") return out(await staryFrameMeta());
   if(b.action==="stary_rynek_frame") return await staryFrameResponse();
@@ -346,20 +485,34 @@ Deno.serve(async(req)=>{
   }
 
   if(b.action==="vision_input"){
-    if(b.source_id!==STARY.id)return out({ok:false,error:"vision_input_not_ready_for_source"},404);
-    const live=await staryStatus(false);
-    if(!live.ok||!live.live)return out({ok:false,error:"live_source_unavailable",detail:live},503);
+    if(b.source_id===STARY.id){
+      const live=await staryStatus(false);
+      if(!live.ok||!live.live)return out({ok:false,error:"live_source_unavailable",detail:live},503);
+      return out({
+        ok:true,
+        schema:"GENESIS_CAMERA_VISION_INPUT_V02",
+        source_id:STARY.id,
+        checked_at:live.checked_at,
+        input:{type:"fresh_jpeg",action:"stary_rynek_frame",fallback:live.vision_input},
+        provenance:live.provenance,
+        freshness:{media_sequence:live.first?.sequence,latest_segment:live.first?.latest_segment},
+        boundary:live.boundary
+      });
+    }
+    const eye=resolvePublicEye(b.source_id);
+    if(!eye)return out({ok:false,error:"vision_input_not_ready_for_source"},404);
+    const health=await publicEyeProbe(eye.eye_id);
+    if(!health.ok)return out({ok:false,error:"public_eye_unavailable",health},503);
     return out({
       ok:true,
-      schema:"GENESIS_CAMERA_VISION_INPUT_V01",
-      source_id:STARY.id,
-      checked_at:live.checked_at,
-      input:{type:"fresh_jpeg",action:"stary_rynek_frame",fallback:live.vision_input},
-      provenance:live.provenance,
-      freshness:{media_sequence:live.first?.sequence,latest_segment:live.first?.latest_segment},
-      boundary:live.boundary
+      schema:"GENESIS_CAMERA_VISION_INPUT_V02",
+      source_id:eye.eye_id,
+      checked_at:health.checked_at,
+      input:{type:"fresh_jpeg",action:"public_eye_frame",eye_id:eye.eye_id},
+      freshness:health,
+      boundary:"Public intentionally exposed camera snapshot only; no credentials, no private feeds, no identity tracking, no persistence."
     });
   }
 
-  return out({ok:false,error:"unsupported_action",allowed:["probe_source","probe_all","stary_rynek_live_status","stary_rynek_verify_live","stary_rynek_frame_meta","stary_rynek_frame","vision_input"]},400);
+  return out({ok:false,error:"unsupported_action",allowed:["public_eye_probe","public_eye_frame","probe_source","probe_all","stary_rynek_live_status","stary_rynek_verify_live","stary_rynek_frame_meta","stary_rynek_frame","vision_input"]},400);
 });
