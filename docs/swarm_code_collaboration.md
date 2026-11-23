@@ -50,10 +50,10 @@ The stdlib-only scanner accepts a local JSON manifest:
 
 Run:
 
-\`\`\`bash
+```bash
 python -m unittest discover -s tests -v
 python src/swarm_review_gate_v01.py path/to/manifest.json
-\`\`\`
+```
 
 A successful scan returns **CANDIDATE_NEEDS_EXTERNAL_CHECKS** and
 **merge_allowed = false**. This is *not* validation of the truth of the
