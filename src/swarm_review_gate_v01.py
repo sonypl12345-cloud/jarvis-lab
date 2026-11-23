@@ -51,6 +51,94 @@ def safe_repo_path(value: Any) -> bool:
     return True
 
 
+
+def assess_external_advice(ticket: Any, report: Any) -> dict[str, Any]:
+    """Screen an external agent's suggestion without granting any code authority.
+
+    Both payloads are untrusted *unless* the host independently binds the
+    ticket to a real Git commit. Even a passing report stays quarantined.
+    """
+    errors: list[str] = []
+    if not isinstance(ticket, dict) or not isinstance(report, dict):
+        errors.append("ticket_or_report_not_object")
+        return _external_result(errors)
+    if ticket.get("schema") != "JARVIS_SWARM_TICKET/0.1":
+        errors.append("invalid_ticket_schema")
+    if report.get("schema") != "JARVIS_SWARM_EXTERNAL_ADVICE/0.1":
+        errors.append("invalid_report_schema")
+    if ticket.get("visibility") != "PUBLIC":
+        errors.append("public_only")
+    if not isinstance(ticket.get("task_id"), str) or not IDENT.fullmatch(
+        ticket["task_id"]
+    ):
+        errors.append("invalid_task_id")
+    if not isinstance(ticket.get("repository"), str) or not REPO.fullmatch(
+        ticket["repository"]
+    ):
+        errors.append("invalid_repository")
+    if not isinstance(ticket.get("base_sha"), str) or not SHA.fullmatch(
+        ticket["base_sha"]
+    ):
+        errors.append("invalid_base_sha")
+    if ticket.get("role") not in REQUIRED_ROLES:
+        errors.append("invalid_ticket_role")
+    if report.get("role") not in REQUIRED_ROLES:
+        errors.append("invalid_report_role")
+
+    for key in ("task_id", "repository", "base_sha", "role"):
+        if ticket.get(key) != report.get(key):
+            errors.append("mismatch:" + key)
+
+    allowed = ticket.get("allowed_paths")
+    changed = report.get("paths")
+    if not isinstance(allowed, list) or not (1 <= len(allowed) <= 10):
+        errors.append("invalid_ticket_paths")
+        allowed = []
+    elif any(not safe_repo_path(p) for p in allowed):
+        errors.append("unsafe_ticket_path")
+    if not isinstance(changed, list) or not (1 <= len(changed) <= 10):
+        errors.append("invalid_report_paths")
+    elif (
+        any(not safe_repo_path(p) for p in changed)
+        or not set(changed).issubset(set(allowed))
+    ):
+        errors.append("out_of_scope_or_unsafe_path")
+
+    provider = report.get("provider")
+    if not isinstance(provider, str) or not IDENT.fullmatch(provider):
+        errors.append("invalid_provider_label")
+    limit = ticket.get("max_response_chars")
+    if type(limit) is not int or not (1 <= limit <= 4000):
+        errors.append("invalid_response_budget")
+        limit = 0
+    advice = report.get("advice")
+    if not isinstance(advice, str) or not (1 <= len(advice) <= limit):
+        errors.append("missing_or_oversize_advice")
+    elif "\x00" in advice:
+        errors.append("invalid_advice_text")
+
+    allowed_fields = {
+        "schema", "task_id", "repository", "base_sha", "role",
+        "provider", "paths", "advice"
+    }
+    if set(report) - allowed_fields:
+        errors.append("unsupported_report_fields")
+    return _external_result(errors)
+
+
+def _external_result(errors: list[str]) -> dict[str, Any]:
+    return {
+        "schema": "JARVIS_SWARM_EXTERNAL_ADVICE_GATE/0.1",
+        "verdict": "HOLD" if errors else "QUARANTINED_ADVISORY_ONLY",
+        "errors": sorted(set(errors)),
+        "merge_allowed": False,
+        "commit_allowed": False,
+        "execute_generated_code": False,
+        "provider_identity_verified": False,
+        "next": "Verify GitHub source/commit and independently test any proposed patch",
+    }
+
+
 def assess(manifest: Any) -> dict[str, Any]:
     """Screen a proposed change; NEVER return authority to merge."""
     errors: list[str] = []
