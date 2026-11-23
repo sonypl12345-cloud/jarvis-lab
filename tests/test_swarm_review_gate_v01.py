@@ -89,6 +89,37 @@ class SwarmReviewGateTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(safe_repo_path(path))
 
+    def test_sensitive_file_paths_are_rejected(self):
+        for path in (
+            "src/secrets.json",
+            "src/Secrets.json",
+            "src/credentials.yaml",
+            "src/token.py",
+            "docs/api_key.md",
+            "src/nested/SECRET.backup.py",
+            "examples/config/.ENV.local",
+            "src/secret/key.txt",
+            "tests/TOKEN/ok.py",
+        ):
+            with self.subTest(path=path):
+                self.assertFalse(safe_repo_path(path))
+
+    def test_safe_source_paths_still_accepted(self):
+        for path in (
+            "src/safe_rules.py",
+            "tests/test_example.py",
+            "docs/api_reference.md",
+            "examples/hello.json",
+            "src/secure_notes.py",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(safe_repo_path(path))
+
+    def test_secret_path_in_manifest_holds(self):
+        data = valid_manifest()
+        data["changed_paths"] = ["src/secrets.json"]
+        self.assertIn("unsafe_changed_path", assess(data)["errors"])
+
     def test_duplicate_paths_hold(self):
         data = valid_manifest()
         data["changed_paths"].append("src/example.py")
