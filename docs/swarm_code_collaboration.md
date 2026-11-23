@@ -76,3 +76,60 @@ Create draft Git branches/PRs only on explicit task approval.
 
 **Stage 4:** add measured quality gates and replayable regressions.
 Never allow a model to approve its own patch or alter the merge policy.
+
+
+## Reusing external agents (one repository, no second brain)
+
+External agents are replaceable specialists behind the **existing** GENESIS
+Free Agent Broker, not independent owners of the codebase. A ticket must
+include a public repository, exact base commit SHA, task ID, assigned role,
+limited paths and a response-size budget. The provider's answer is untrusted
+text, not permission to execute code or merge a PR.
+
+Example ticket (the host independently verifies the SHA and GitHub scope):
+
+```json
+{
+  "schema": "JARVIS_SWARM_TICKET/0.1",
+  "task_id": "lab-review-001",
+  "repository": "example/jarvis-lab",
+  "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "visibility": "PUBLIC",
+  "role": "reviewer",
+  "allowed_paths": ["src/swarm_review_gate_v01.py"],
+  "max_response_chars": 1000
+}
+```
+
+Example normalized external response:
+
+```json
+{
+  "schema": "JARVIS_SWARM_EXTERNAL_ADVICE/0.1",
+  "task_id": "lab-review-001",
+  "repository": "example/jarvis-lab",
+  "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "role": "reviewer",
+  "provider": "external-reviewer-01",
+  "paths": ["src/swarm_review_gate_v01.py"],
+  "advice": "Consider additional test cases for nested sensitive filenames."
+}
+```
+
+Call `assess_external_advice(ticket, report)` from the existing
+`src/swarm_review_gate_v01.py`. Even with all fields validated, the
+result is **QUARANTINED_ADVISORY_ONLY**, and code execution, commit,
+and merge authority remain **false**. The provider label and advice
+are unverified; check actual GitHub sources and independently test any
+human/integrator-prepared patch.
+
+A provider may be unavailable, unauthenticated, unable to inspect a
+small repository, or may return misleading advice. The broker must
+route such results to HOLD and use a different available specialist
+only with a fresh scoped ticket. Never send private repositories,
+tokens, device credentials, or personal project memory to free
+third-party services.
+
+For a single project, use one authoritative Git repository, per-task
+branches, test-first CI and one integration decision. Do not allow
+simultaneous direct writes by outside agents to the same branch.
