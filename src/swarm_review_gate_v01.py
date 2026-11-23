@@ -96,6 +96,7 @@ def assess_external_advice(ticket: Any, report: Any) -> dict[str, Any]:
         allowed = []
     elif any(not safe_repo_path(p) for p in allowed):
         errors.append("unsafe_ticket_path")
+        allowed = []
     if not isinstance(changed, list) or not (1 <= len(changed) <= 10):
         errors.append("invalid_report_paths")
     elif (
