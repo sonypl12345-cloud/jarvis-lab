@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from src.swarm_review_gate_v01 import assess, safe_repo_path
+from src.swarm_review_gate_v01 import assess, assess_external_advice, safe_repo_path
 
 
 BASE = "a" * 40
@@ -134,6 +134,98 @@ class SwarmReviewGateTests(unittest.TestCase):
     def test_malformed_manifest_holds(self):
         for data in (None, [], {"schema": "wrong"}):
             self.assertEqual(assess(data)["verdict"], "HOLD")
+
+
+
+def valid_external_ticket_and_report():
+    ticket = {
+        "schema": "JARVIS_SWARM_TICKET/0.1",
+        "task_id": "lab-external-review-001",
+        "repository": "example/jarvis-lab",
+        "base_sha": "a" * 40,
+        "visibility": "PUBLIC",
+        "role": "reviewer",
+        "allowed_paths": ["src/swarm_review_gate_v01.py"],
+        "max_response_chars": 1000,
+    }
+    report = {
+        "schema": "JARVIS_SWARM_EXTERNAL_ADVICE/0.1",
+        "task_id": ticket["task_id"],
+        "repository": ticket["repository"],
+        "base_sha": ticket["base_sha"],
+        "role": "reviewer",
+        "provider": "deepwiki-mcp",
+        "paths": ["src/swarm_review_gate_v01.py"],
+        "advice": "Suggest a negative test for nested secret-like folder names.",
+    }
+    return ticket, report
+
+
+class ExternalAgentContractTests(unittest.TestCase):
+    def test_valid_external_report_remains_quarantined(self):
+        ticket, report = valid_external_ticket_and_report()
+        result = assess_external_advice(ticket, report)
+        self.assertEqual(result["verdict"], "QUARANTINED_ADVISORY_ONLY")
+        self.assertFalse(result["merge_allowed"])
+        self.assertFalse(result["commit_allowed"])
+        self.assertFalse(result["execute_generated_code"])
+        self.assertFalse(result["provider_identity_verified"])
+
+    def test_wrong_commit_or_task_holds(self):
+        for field, altered in (("base_sha", "b" * 40),
+                               ("task_id", "lab-other-task-001")):
+            with self.subTest(field=field):
+                t, r = valid_external_ticket_and_report()
+                r[field] = altered
+                self.assertEqual(assess_external_advice(t, r)["verdict"], "HOLD")
+
+    def test_private_request_holds(self):
+        t, r = valid_external_ticket_and_report()
+        t["visibility"] = "PRIVATE"
+        self.assertIn("public_only", assess_external_advice(t, r)["errors"])
+
+    def test_external_cannot_request_direct_merge(self):
+        t, r = valid_external_ticket_and_report()
+        r["auto_merge"] = True
+        self.assertIn("unsupported_report_fields", assess_external_advice(t, r)["errors"])
+
+    def test_external_cannot_forge_test_receipt(self):
+        t, r = valid_external_ticket_and_report()
+        r["tests_passed"] = 999
+        self.assertEqual(assess_external_advice(t, r)["verdict"], "HOLD")
+
+    def test_out_of_scope_and_sensitive_paths_hold(self):
+        for path in ("src/secrets.json", "src/another.py",
+                     "src/../private.json", "/etc/passwd"):
+            with self.subTest(path=path):
+                t, r = valid_external_ticket_and_report()
+                r["paths"] = [path]
+                self.assertIn("out_of_scope_or_unsafe_path",
+                              assess_external_advice(t, r)["errors"])
+
+    def test_large_advice_holds(self):
+        t, r = valid_external_ticket_and_report()
+        r["advice"] = "x" * 1100
+        self.assertIn("missing_or_oversize_advice",
+                      assess_external_advice(t, r)["errors"])
+
+    def test_unhashable_or_invalid_paths_fail_closed(self):
+        t, r = valid_external_ticket_and_report()
+        t["allowed_paths"] = [{"not": "a path"}]
+        self.assertEqual(assess_external_advice(t, r)["verdict"], "HOLD")
+        t, r = valid_external_ticket_and_report()
+        r["paths"] = [{"not": "a path"}]
+        self.assertEqual(assess_external_advice(t, r)["verdict"], "HOLD")
+
+    def test_missing_report_fails_closed(self):
+        t, _ = valid_external_ticket_and_report()
+        self.assertEqual(assess_external_advice(t, None)["verdict"], "HOLD")
+
+    def test_does_not_modify_external_payload(self):
+        t, r = valid_external_ticket_and_report()
+        orig = copy.deepcopy((t, r))
+        assess_external_advice(t, r)
+        self.assertEqual((t, r), orig)
 
 
 if __name__ == "__main__":
