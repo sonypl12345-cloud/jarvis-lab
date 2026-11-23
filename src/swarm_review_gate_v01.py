@@ -18,6 +18,8 @@ SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 IDENT = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{2,79}$")
 REPO = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
 ALLOWED_ROOTS = {"src", "tests", "docs", "examples"}
+SENSITIVE_NAME_STEMS = frozenset({"secret", "secrets", "credential",
+                                  "credentials", "token", "tokens", "api_key"})
 
 
 def safe_repo_path(value: Any) -> bool:
@@ -34,7 +36,15 @@ def safe_repo_path(value: Any) -> bool:
         return False
     if parts[0] not in ALLOWED_ROOTS:
         return False
-    if path.name.startswith(".env") or path.suffix.lower() in {
+    # Screen all path components, not just the final file's extension.
+    # This is a defense-in-depth name filter, not a secrets scanner.
+    if any(
+        part.casefold().startswith(".env")
+        or part.casefold().split(".", 1)[0] in SENSITIVE_NAME_STEMS
+        for part in parts[1:]
+    ):
+        return False
+    if path.suffix.lower() in {
         ".pem", ".key", ".p12", ".pfx", ".sqlite", ".db"
     }:
         return False
