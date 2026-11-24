@@ -104,6 +104,18 @@ class SwarmReviewGateTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertFalse(safe_repo_path(path))
 
+    def test_ascii_control_characters_rejected(self):
+        for code in (*range(32), 127):
+            for template in ("src/file{}.py", "docs/folder{}/notes.md"):
+                with self.subTest(code=code, template=template):
+                    self.assertIs(safe_repo_path(template.format(chr(code))), False)
+
+    def test_printable_paths_keep_boolean_api(self):
+        for path in ("src/example.py", "src/file name.py",
+                     "docs/nested/guide.md", "examples/hello.json"):
+            with self.subTest(path=path):
+                self.assertIs(safe_repo_path(path), True)
+
     def test_safe_source_paths_still_accepted(self):
         for path in (
             "src/safe_rules.py",
