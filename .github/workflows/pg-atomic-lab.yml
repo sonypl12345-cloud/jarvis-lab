@@ -1,0 +1,119 @@
+name: PostgreSQL atomic transaction lab
+on:
+  push:
+    branches: ['lab/pg-atomic-20261127']
+permissions: {}
+jobs:
+  atomic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lab
+          POSTGRES_PASSWORD: local-fixture-only
+          POSTGRES_DB: lab
+        options: >-
+          --health-cmd "pg_isready -U lab -d lab"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - name: Synthetic transaction tests
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          db() { docker exec -i "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab "$@"; }
+          query() { db -c "$1"; }
+          check() {
+            local label="$1" sql="$2" expected="$3" actual
+            actual=$(query "$sql")
+            if [[ "$actual" != "$expected" ]]; then echo "FAIL: $label expected=$expected actual=$actual"; exit 1; fi
+            echo "PASS: $label"
+          }
+          db <<'SQL'
+          CREATE TABLE prior (id integer PRIMARY KEY, device text NOT NULL, uses integer NOT NULL DEFAULT 0);
+          INSERT INTO prior(id,device) VALUES (1,'fixture-a'),(2,'fixture-b');
+          CREATE TABLE receipt (
+            final_id integer PRIMARY KEY,
+            prior_id integer NOT NULL REFERENCES prior(id),
+            device text NOT NULL,
+            first_id integer NOT NULL,
+            CHECK(first_id<>final_id)
+          );
+          CREATE FUNCTION admit(f integer,p integer,d text,s integer, authorized boolean)
+          RETURNS text LANGUAGE plpgsql AS $$
+          DECLARE r receipt%ROWTYPE; n integer;
+          BEGIN
+            IF authorized IS DISTINCT FROM true OR f IS NULL OR p IS NULL OR d IS NULL OR s IS NULL OR f=s THEN
+              RETURN 'REJECT';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM prior WHERE id=p AND device=d) THEN
+              RETURN 'REJECT';
+            END IF;
+            INSERT INTO receipt VALUES(f,p,d,s) ON CONFLICT(final_id) DO NOTHING;
+            GET DIAGNOSTICS n=ROW_COUNT;
+            IF n=1 THEN
+              UPDATE prior SET uses=uses+1 WHERE id=p;
+              RETURN 'RECORDED';
+            END IF;
+            SELECT * INTO r FROM receipt WHERE final_id=f;
+            IF FOUND AND r.prior_id=p AND r.device=d AND r.first_id=s THEN RETURN 'REPLAY'; END IF;
+            RETURN 'CONFLICT';
+          END $$;
+          SQL
+          check version "SELECT current_setting('server_version_num')::int/10000" 17
+          check initial "SELECT admit(100,1,'fixture-a',10,true)" RECORDED
+          check repeat "SELECT admit(100,1,'fixture-a',10,true)" REPLAY
+          check changed_source "SELECT admit(100,1,'fixture-a',11,true)" CONFLICT
+          check different_prior "SELECT admit(100,2,'fixture-b',10,true)" CONFLICT
+          check wrong_device "SELECT admit(101,1,'fixture-b',10,true)" REJECT
+          check unauthorized "SELECT admit(101,1,'fixture-a',10,false)" REJECT
+          check same_step "SELECT admit(101,1,'fixture-a',101,true)" REJECT
+          db <<'SQL'
+          BEGIN;
+          SELECT admit(102,1,'fixture-a',10,true);
+          ROLLBACK;
+          SQL
+          check rollback "SELECT count(*) FROM receipt WHERE final_id=102" 0
+          check rollback_count "SELECT uses FROM prior WHERE id=1" 1
+          check retry "SELECT admit(102,1,'fixture-a',10,true)" RECORDED
+          temp=$(mktemp -d)
+          trap 'rm -rf "$temp"' EXIT
+          # Hold an uncommitted receipt and prove a different session waits on it.
+          ( docker exec -i -e PGAPPNAME=fixture_a "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab -c "BEGIN; SELECT admit(200,1,'fixture-a',20,true); SELECT pg_sleep(5); COMMIT;" >"$temp/a" ) &
+          a=$!
+          ready=0
+          for i in {1..30}; do
+            if [[ $(query "SELECT count(*) FROM pg_stat_activity WHERE application_name='fixture_a' AND wait_event='PgSleep'") == 1 ]]; then ready=1; break; fi
+            sleep .1
+          done
+          test "$ready" = 1
+          ( docker exec -i -e PGAPPNAME=fixture_b "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab -c "SELECT admit(200,1,'fixture-a',20,true)" >"$temp/b" ) &
+          b=$!
+          overlap=0
+          for i in {1..30}; do
+            if [[ $(query "SELECT count(*) FROM pg_stat_activity WHERE application_name='fixture_b' AND wait_event_type='Lock'") == 1 ]]; then overlap=1; break; fi
+            sleep .1
+          done
+          wait "$a"; wait "$b"
+          test "$overlap" = 1
+          grep -Fx RECORDED "$temp/a"; grep -Fx REPLAY "$temp/b"
+          echo "PASS: two-session lock overlap"
+          pids=()
+          for i in {1..16}; do ( query "SELECT admit(300,1,'fixture-a',30,true)" >"$temp/same-$i" ) & pids+=("$!"); done
+          for pid in "${pids[@]}"; do wait "$pid"; done
+          test "$(grep -hxc RECORDED "$temp"/same-* | awk '{s+=$1} END{print s}')" = 1
+          test "$(grep -hxc REPLAY "$temp"/same-* | awk '{s+=$1} END{print s}')" = 15
+          echo "PASS: 16 concurrent identical submissions"
+          pids=()
+          for i in {1..16}; do ( query "SELECT admit($((400+i)),1,'fixture-a',40,true)" >"$temp/distinct-$i" ) & pids+=("$!"); done
+          for pid in "${pids[@]}"; do wait "$pid"; done
+          test "$(grep -hxc RECORDED "$temp"/distinct-* | awk '{s+=$1} END{print s}')" = 16
+          echo "PASS: 16 distinct concurrent submissions"
+          check final_consistency "SELECT (SELECT count(*) FROM receipt)=(SELECT sum(uses) FROM prior)" t
+          check final_count "SELECT count(*) FROM receipt" 20
+          echo "SYNTHETIC_LAB_PASS"
