@@ -300,7 +300,7 @@ jobs:
             ), counted AS (
               UPDATE joint_prior p SET uses=p.uses+i.n FROM increments i WHERE p.id=i.prior_key RETURNING i.n
             )
-            SELECT (SELECT count(*) FROM admitted),(SELECT coalesce(sum(n),0) FROM counted) INTO n,bumped;
+            SELECT (SELECT count(*) FROM admitted),(SELECT coalesce(sum(counted.n),0) FROM counted) INTO n,bumped;
             IF n<>bumped OR inject_failure THEN RAISE EXCEPTION 'fixture rollback'; END IF;
             RETURN n;
           END $$;
