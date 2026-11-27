@@ -225,3 +225,139 @@ jobs:
           query "$INSERT_SQL"
           check noncooperating_writer_limitation "SELECT count(*) FROM fixture_history WHERE task_key=1 OR command_key=11" 2
           echo "IDENTITY_MODEL_PASS_WITH_KNOWN_LIMITATION"
+
+      - name: Joint guard and admission transaction regression
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          db() { docker exec -i "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab "$@"; }
+          query() { db -c "$1"; }
+          check() {
+            local label="$1" sql="$2" expected="$3" actual
+            actual=$(query "$sql")
+            if [[ "$actual" != "$expected" ]]; then echo "FAIL: $label expected=$expected actual=$actual"; exit 1; fi
+            echo "PASS: $label"
+          }
+          db <<'SQL'
+          -- Synthetic model of a cooperative privacy guard and atomic learner.
+          -- Not application code; no real records, credentials, or external connections.
+          CREATE TABLE joint_prior(id integer PRIMARY KEY, uses integer NOT NULL DEFAULT 0);
+          INSERT INTO joint_prior VALUES(1,0),(2,0);
+          CREATE TABLE joint_task(
+            id integer PRIMARY KEY, protected boolean NOT NULL, verified boolean NOT NULL,
+            evidence_ok boolean NOT NULL, status text NOT NULL,
+            final_key integer NOT NULL, prior_key integer NOT NULL, raw text NOT NULL
+          );
+          INSERT INTO joint_task VALUES
+            (1,true,true,true,'done',101,1,'SYNTHETIC_RAW'),
+            (2,true,true,false,'done',102,1,'SYNTHETIC_RAW'),
+            (3,true,true,true,'done',103,1,'SYNTHETIC_RAW'),
+            (4,true,true,true,'done',104,1,'SYNTHETIC_RAW'),
+            (5,false,true,true,'done',105,1,'ordinary'),
+            (6,true,false,true,'done',106,1,'SYNTHETIC_RAW'),
+            (7,true,true,true,'running',107,1,'SYNTHETIC_RAW'),
+            (8,true,true,true,'done',108,2,'SYNTHETIC_RAW'),
+            (9,true,true,true,'done',109,2,'SYNTHETIC_RAW'),
+            (10,true,true,true,'done',110,2,'SYNTHETIC_RAW'),
+            (11,true,true,true,'done',111,2,'SYNTHETIC_RAW'),
+            (12,true,true,true,'done',112,2,'SYNTHETIC_RAW');
+          CREATE TABLE joint_memory(
+            task_key integer UNIQUE, final_key integer UNIQUE,
+            prior_key integer, payload jsonb NOT NULL,
+            CHECK ((task_key IS NOT NULL AND final_key IS NULL)
+                 OR (task_key IS NULL AND final_key IS NOT NULL))
+          );
+          INSERT INTO joint_memory(task_key,payload) VALUES(3,'{"historical":true}');
+          INSERT INTO joint_memory(final_key,payload) VALUES(104,'{"single":true}');
+          CREATE FUNCTION legacy_save(t integer) RETURNS text LANGUAGE plpgsql AS $$
+          DECLARE r joint_task%ROWTYPE;
+          BEGIN
+            SELECT * INTO r FROM joint_task WHERE id=t;
+            IF NOT FOUND OR r.status<>'done' OR NOT r.verified THEN RETURN 'HOLD'; END IF;
+            IF r.protected THEN RETURN 'SKIP_RAW'; END IF;
+            INSERT INTO joint_memory(task_key,payload) VALUES(t,jsonb_build_object('raw',r.raw))
+              ON CONFLICT(task_key) DO NOTHING;
+            RETURN 'LEGACY';
+          END $$;
+          CREATE FUNCTION learn(t integer, inject_failure boolean DEFAULT false) RETURNS integer
+          LANGUAGE plpgsql AS $$
+          DECLARE n integer; bumped integer;
+          BEGIN
+            WITH pair AS MATERIALIZED (
+              SELECT q.final_key,q.prior_key
+              FROM joint_task q JOIN joint_prior p ON p.id=q.prior_key
+              WHERE q.id=t AND q.protected AND q.verified AND q.evidence_ok AND q.status='done'
+                AND NOT EXISTS (SELECT 1 FROM joint_memory m WHERE m.task_key=q.id OR m.final_key=q.final_key)
+              FOR UPDATE OF p
+            ), admitted AS (
+              INSERT INTO joint_memory(final_key,prior_key,payload)
+              SELECT final_key,prior_key,'{"verified":true,"sanitized":true}'::jsonb FROM pair
+              ON CONFLICT(final_key) DO NOTHING RETURNING final_key
+            ), increments AS (
+              SELECT p.prior_key,count(*)::integer n FROM pair p JOIN admitted a USING(final_key) GROUP BY p.prior_key
+            ), counted AS (
+              UPDATE joint_prior p SET uses=p.uses+i.n FROM increments i WHERE p.id=i.prior_key RETURNING i.n
+            )
+            SELECT (SELECT count(*) FROM admitted),(SELECT coalesce(sum(n),0) FROM counted) INTO n,bumped;
+            IF n<>bumped OR inject_failure THEN RAISE EXCEPTION 'fixture rollback'; END IF;
+            RETURN n;
+          END $$;
+          SQL
+          check guarded_legacy "SELECT legacy_save(1)" SKIP_RAW
+          check invalid_proof_legacy "SELECT legacy_save(2)" SKIP_RAW
+          check valid_learning "SELECT learn(1)" 1
+          check replay "SELECT learn(1)" 0
+          check reject_invalid_proof "SELECT learn(2)" 0
+          check existing_legacy_hold "SELECT learn(3)" 0
+          check existing_final_hold "SELECT learn(4)" 0
+          check unrelated_legacy "SELECT legacy_save(5)" LEGACY
+          check unverified_legacy "SELECT legacy_save(6)" HOLD
+          check unverified_learner "SELECT learn(6)" 0
+          check incomplete_learner "SELECT learn(7)" 0
+          check incomplete_legacy "SELECT legacy_save(7)" HOLD
+          check raw_not_copied "SELECT count(*) FROM joint_memory WHERE payload::text LIKE '%SYNTHETIC_RAW%'" 0
+          check prior_count_initial "SELECT uses FROM joint_prior WHERE id=1" 1
+          if query "SELECT learn(8,true)" >/dev/null 2>&1; then echo "FAIL: expected rollback"; exit 1; fi
+          check exception_rollback_row "SELECT count(*) FROM joint_memory WHERE final_key=108" 0
+          check exception_rollback_counter "SELECT uses FROM joint_prior WHERE id=2" 0
+          check retry_after_exception "SELECT learn(8)" 1
+          temp=$(mktemp -d)
+          trap 'rm -rf "$temp"' EXIT
+          ( docker exec -i -e PGAPPNAME=joint_a "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab -c "BEGIN; SELECT learn(9); SELECT pg_sleep(5); COMMIT;" >"$temp/a" ) &
+          a=$!
+          ready=0
+          for i in {1..30}; do
+            if [[ $(query "SELECT count(*) FROM pg_stat_activity WHERE application_name='joint_a' AND wait_event='PgSleep'") == 1 ]]; then ready=1; break; fi
+            sleep .1
+          done
+          test "$ready" = 1
+          ( docker exec -i -e PGAPPNAME=joint_b "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab -c "SELECT learn(9)" >"$temp/b" ) &
+          b=$!
+          overlap=0
+          for i in {1..30}; do
+            if [[ $(query "SELECT count(*) FROM pg_stat_activity WHERE application_name='joint_b' AND wait_event_type='Lock'") == 1 ]]; then overlap=1; break; fi
+            sleep .1
+          done
+          test "$overlap" = 1
+          check old_path_during_learner "SELECT legacy_save(9)" SKIP_RAW
+          wait "$a"; wait "$b"
+          grep -Fx 1 "$temp/a"; grep -Fx 0 "$temp/b"
+          echo "PASS: actual independent learner lock overlap and replay"
+          check single_admission "SELECT count(*) FROM joint_memory WHERE final_key=109 OR task_key=9" 1
+          check exact_counter "SELECT uses FROM joint_prior WHERE id=2" 2
+          # Two independent completions share the same prior counter.
+          ( query "SELECT learn(10)" >"$temp/c" ) & c=$!
+          ( query "SELECT learn(11)" >"$temp/d" ) & d=$!
+          wait "$c"; wait "$d"
+          grep -Fx 1 "$temp/c"; grep -Fx 1 "$temp/d"
+          check shared_prior_counter "SELECT uses FROM joint_prior WHERE id=2" 4
+          check global_counter_consistency "SELECT (SELECT sum(uses) FROM joint_prior)=(SELECT count(*) FROM joint_memory WHERE prior_key IS NOT NULL)" t
+          check historical_preserved "SELECT count(*) FROM joint_memory WHERE (task_key=3 AND payload='{\"historical\":true}') OR (final_key=104 AND payload='{\"single\":true}')" 2
+          # Explicit limitation: without immutable terminal state, a later modification
+          # can invalidate an earlier admission. This is a diagnostic, not a safety pass.
+          check terminal_initial_admission "SELECT learn(12)" 1
+          query "UPDATE joint_task SET evidence_ok=false WHERE id=12"
+          check terminal_mutability_limitation "SELECT count(*) FROM joint_memory m JOIN joint_task t USING(final_key) WHERE t.id=12 AND NOT t.evidence_ok" 1
+          echo "JOINT_SYNTHETIC_PASS_WITH_TERMINAL_MUTABILITY_LIMITATION"
