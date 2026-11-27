@@ -117,3 +117,111 @@ jobs:
           check final_consistency "SELECT (SELECT count(*) FROM receipt)=(SELECT sum(uses) FROM prior)" t
           check final_count "SELECT count(*) FROM receipt" 20
           echo "SYNTHETIC_LAB_PASS"
+
+      - name: Synthetic source identity regression
+        env:
+          PG_CONTAINER: ${{ job.services.postgres.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          db() { docker exec -i "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab "$@"; }
+          query() { db -c "$1"; }
+          check() {
+            local label="$1" sql="$2" expected="$3" actual
+            actual=$(query "$sql")
+            if [[ "$actual" != "$expected" ]]; then echo "FAIL: $label expected=$expected actual=$actual"; exit 1; fi
+            echo "PASS: $label"
+          }
+          db <<'SQL'
+          -- Abstract synthetic model; no application schema, real data or external connections.
+          CREATE TABLE fixture_task (
+            id integer PRIMARY KEY, eligible boolean NOT NULL, verified boolean NOT NULL,
+            device text NOT NULL, first_id integer NOT NULL, final_id integer NOT NULL
+          );
+          CREATE TABLE fixture_history (
+            id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            task_key integer UNIQUE, command_key integer UNIQUE,
+            category text NOT NULL, device text NOT NULL,
+            source_task integer, first_id integer,
+            CHECK ((task_key IS NOT NULL AND command_key IS NULL) OR
+                   (task_key IS NULL AND command_key IS NOT NULL))
+          );
+          INSERT INTO fixture_task VALUES
+            (1,true,true,'a',10,11),(2,true,false,'a',12,13),
+            (3,true,true,'a',14,15),(4,true,true,'a',16,17),
+            (5,true,true,'a',18,19),(6,false,true,'a',20,21),
+            (7,true,true,'a',22,23),(8,true,true,'a',24,23),
+            (9,true,true,'a',25,26),(10,true,true,'a',27,28),
+            (11,true,true,'a',29,30);
+          INSERT INTO fixture_history(task_key,category,device) VALUES (4,'old','a');
+          INSERT INTO fixture_history(command_key,category,device) VALUES (15,'single','a');
+          CREATE FUNCTION save_sequence(t integer, ingress text) RETURNS text
+          LANGUAGE plpgsql AS $$
+          DECLARE v fixture_task%ROWTYPE; h fixture_history%ROWTYPE; n integer;
+          BEGIN
+            IF ingress IS NULL OR ingress NOT IN ('old_entry','new_entry') THEN RETURN 'REJECT'; END IF;
+            SELECT * INTO v FROM fixture_task WHERE id=t FOR UPDATE;
+            IF NOT FOUND OR NOT v.eligible OR NOT v.verified OR v.first_id=v.final_id THEN
+              RETURN 'HOLD_EVIDENCE';
+            END IF;
+            -- Both entry points must cooperate; never fall back to a legacy write.
+            IF EXISTS (SELECT 1 FROM fixture_history WHERE task_key=t) THEN RETURN 'HOLD_OLD'; END IF;
+            INSERT INTO fixture_history(command_key,category,device,source_task,first_id)
+              VALUES(v.final_id,'sequence',v.device,v.id,v.first_id)
+              ON CONFLICT(command_key) DO NOTHING;
+            GET DIAGNOSTICS n=ROW_COUNT;
+            IF n=1 THEN RETURN 'RECORDED'; END IF;
+            SELECT * INTO h FROM fixture_history WHERE command_key=v.final_id;
+            IF FOUND AND h.category='sequence' AND h.device=v.device
+               AND h.source_task=v.id AND h.first_id=v.first_id THEN RETURN 'REPLAY'; END IF;
+            RETURN 'HOLD_CONFLICT';
+          END $$;
+          SQL
+          check new_entry "SELECT save_sequence(1,'new_entry')" RECORDED
+          check old_entry_replay "SELECT save_sequence(1,'old_entry')" REPLAY
+          check no_legacy_fallback "SELECT count(*) FROM fixture_history WHERE task_key=1" 0
+          check unverified "SELECT save_sequence(2,'old_entry')" HOLD_EVIDENCE
+          check single_command_collision "SELECT save_sequence(3,'new_entry')" HOLD_CONFLICT
+          check historical_legacy_collision "SELECT save_sequence(4,'new_entry')" HOLD_OLD
+          check unrelated_scope "SELECT save_sequence(6,'old_entry')" HOLD_EVIDENCE
+          check unknown_task "SELECT save_sequence(99,'old_entry')" HOLD_EVIDENCE
+          check unknown_ingress "SELECT save_sequence(5,'other')" REJECT
+          check different_execution "SELECT save_sequence(5,'old_entry')" RECORDED
+          check shared_final_first "SELECT save_sequence(7,'new_entry')" RECORDED
+          check shared_final_second "SELECT save_sequence(8,'old_entry')" HOLD_CONFLICT
+          db <<'SQL'
+          BEGIN;
+          SELECT save_sequence(9,'old_entry');
+          ROLLBACK;
+          SQL
+          check rollback "SELECT count(*) FROM fixture_history WHERE command_key=26" 0
+          check after_rollback "SELECT save_sequence(9,'new_entry')" RECORDED
+          temp=$(mktemp -d)
+          trap 'rm -rf "$temp"' EXIT
+          ( docker exec -i -e PGAPPNAME=identity_a "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab -c "BEGIN; SELECT save_sequence(10,'old_entry'); SELECT pg_sleep(5); COMMIT;" >"$temp/a" ) &
+          a=$!
+          ready=0
+          for i in {1..30}; do
+            if [[ $(query "SELECT count(*) FROM pg_stat_activity WHERE application_name='identity_a' AND wait_event='PgSleep'") == 1 ]]; then ready=1; break; fi
+            sleep .1
+          done
+          test "$ready" = 1
+          ( docker exec -i -e PGAPPNAME=identity_b "$PG_CONTAINER" psql -X -qAt -v ON_ERROR_STOP=1 -U lab -d lab -c "SELECT save_sequence(10,'new_entry')" >"$temp/b" ) &
+          b=$!
+          overlap=0
+          for i in {1..30}; do
+            if [[ $(query "SELECT count(*) FROM pg_stat_activity WHERE application_name='identity_b' AND wait_event_type='Lock'") == 1 ]]; then overlap=1; break; fi
+            sleep .1
+          done
+          wait "$a"; wait "$b"
+          test "$overlap" = 1
+          grep -Fx RECORDED "$temp/a"; grep -Fx REPLAY "$temp/b"
+          echo "PASS: independent competing entry points"
+          check one_canonical "SELECT count(*) FROM fixture_history WHERE command_key=28 OR task_key=10" 1
+          check original_rows_preserved "SELECT count(*) FROM fixture_history WHERE (task_key=4 AND category='old') OR (command_key=15 AND category='single')" 2
+          check no_rejected_rows "SELECT count(*) FROM fixture_history WHERE command_key IN(13,21,30)" 0
+          # A noncooperating legacy writer is intentionally shown to bypass this policy:
+          INSERT_SQL="INSERT INTO fixture_history(task_key,category,device) VALUES (1,'old','a')"
+          query "$INSERT_SQL"
+          check noncooperating_writer_limitation "SELECT count(*) FROM fixture_history WHERE task_key=1 OR command_key=11" 2
+          echo "IDENTITY_MODEL_PASS_WITH_KNOWN_LIMITATION"
